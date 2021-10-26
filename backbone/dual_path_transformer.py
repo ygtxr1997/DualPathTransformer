@@ -151,15 +151,34 @@ class PreNorm(nn.Module):
         super().__init__()
         self.norm = nn.LayerNorm(dim)
         self.fn = fn
+
     def forward(self, x, **kwargs):
         return self.fn(self.norm(x), **kwargs)
+
+
+class PreNormDual(nn.Module):
+    def __init__(self,
+                 dim,
+                 fn):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(dim)
+        self.norm2 = nn.LayerNorm(dim)
+        self.fn = fn
+
+    def forward(self, x, **kwargs):
+        _, hw, _ = x.shape
+        hw //= 2
+        x = torch.cat((self.norm1(x[:, :hw, :]),
+                       self.norm2(x[:, hw:, :])),
+                      dim=1)
+        return self.fn(x, **kwargs)
 
 
 class FeedForward(nn.Module):
     def __init__(self,
                  dim,
                  hidden_dim,
-                 dropout = 0.):
+                 dropout=0.):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(dim, hidden_dim),
@@ -170,6 +189,23 @@ class FeedForward(nn.Module):
         )
     def forward(self, x):
         return self.net(x)
+
+
+class FeedForwardDual(nn.Module):
+    def __init__(self,
+                 dim,
+                 hidden_dim,
+                 dropout=0.):
+        super().__init__()
+        self.ff1 = FeedForward(dim, hidden_dim, dropout)
+        self.ff2 = FeedForward(dim, hidden_dim, dropout)
+    def forward(self, x):
+        _, hw, _ = x.shape
+        hw //= 2
+        x = torch.cat((self.ff1(x[:, :hw, :]),
+                       self.ff2(x[:, hw:, :])),
+                      dim=1)
+        return x
 
 
 class Attention(nn.Module):
@@ -205,6 +241,25 @@ class Attention(nn.Module):
         return self.to_out(out)
 
 
+class AttentionDual(nn.Module):
+    def __init__(self,
+                 dim,
+                 heads=8,
+                 dim_head=64,
+                 dropout=0.):
+        super().__init__()
+        self.path1 = Attention(dim, heads, dim_head, dropout)
+        self.path2 = Attention(dim, heads, dim_head, dropout)
+
+    def forward(self, x):
+        _, hw, _ = x.shape
+        hw //= 2
+        x = torch.cat((self.path1(x[:, :hw, :]),
+                       self.path2(x[:, hw:, :])),
+                      dim=1)
+        return x
+
+
 class CrossAttention(nn.Module):
     def __init__(self,
                  dim,
@@ -218,8 +273,42 @@ class CrossAttention(nn.Module):
         self.scale = dim_head ** -0.5
 
         self.attend = nn.Softmax(dim=-1)
-        self.to_qkv = None
+        self.to_qkv_id = nn.Linear(dim, inner_dim * 3, bias=False)
+        self.to_qkv_oc = nn.Linear(dim, inner_dim * 3, bias=False)
 
+        self.to_out_1 = nn.Sequential(
+            nn.Linear(inner_dim, dim),
+            nn.Dropout(dropout)
+        )
+        self.to_out_2 = nn.Sequential(
+            nn.Linear(inner_dim, dim),
+            nn.Dropout(dropout)
+        )
+
+    def forward(self, x):
+        _, hw, _ = x.shape
+        x_id, x_oc = x[:, :hw, :], x[:, hw:, :]
+
+        qkv_id = self.to_qkv_id(x_id).chunk(3, dim=-1)
+        q1, k1, v1 = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=self.heads), qkv_id)
+
+        qkv_oc = self.to_qkv_oc(x_oc).chunk(3, dim=-1)
+        q2, k2, v2 = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=self.heads), qkv_oc)
+
+        dots_1 = torch.matmul(q1, k2.transpose(-1, -2)) * self.scale
+        attn_1 = self.attend(dots_1)
+        out_1 = torch.matmul(attn_1, v2)
+        out_1 = rearrange(out_1, 'b h n d -> b n (h d)')
+
+        dots_2 = torch.matmul(q2, k1.transpose(-1, -2)) * self.scale
+        attn_2 = self.attend(dots_2)
+        out_2 = torch.matmul(attn_2, v1)
+        out_2 = rearrange(out_2, 'b h n d -> b n (h d)')
+
+        out_1 = self.to_out_1(out_1)
+        out_2 = self.to_out_2(out_2)
+
+        return torch.cat((out_1, out_2), dim=1)
 
 class Transformer(nn.Module):
     def __init__(self,
@@ -233,19 +322,21 @@ class Transformer(nn.Module):
         self.layers = nn.ModuleList([])
         for idx in range(depth):
             self.layers.append(nn.ModuleList([
-                PreNorm(dim, Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout)),
-                PreNorm(dim, FeedForward(dim, mlp_dim, dropout=dropout))
+                PreNormDual(dim, AttentionDual(dim, heads=heads, dim_head=dim_head, dropout=dropout)),
+                PreNormDual(dim, FeedForwardDual(dim, mlp_dim, dropout=dropout)),
+                PreNormDual(dim, CrossAttention(dim, heads=heads, dim_head=dim_head, dropout=dropout)),
+                PreNormDual(dim, FeedForwardDual(dim, mlp_dim, dropout=dropout)),
             ]))
-            # self.layers.append(nn.ModuleList([
-            #     PreNorm(dim, CrossAttention(dim, heads=heads, dim_head=dim_head, dropout=dropout)),
-            #     PreNorm(dim, FeedForward(dim, mlp_dim, dropout=dropout))
-            # ]))
 
     def forward(self, x):
-        for attn, ff in self.layers:
-            x = attn(x) + x
-            x = ff(x) + x
-        return x
+        for sa, ff1, ca, ff2 in self.layers:
+            x = sa(x) + x
+            x = ff1(x) + x
+            x = ca(x) + x
+            x = ff2(x) + x
+        _, hw, _ = x.shape
+        hw //= 2
+        return x[:, :hw, :], x[:, hw:, :]
 
 
 class DualPathTransformer(nn.Module):
@@ -289,32 +380,36 @@ class DualPathTransformer(nn.Module):
         )
 
     def forward(self, x):
-        pat_id = self.extractor_id(x)
-        pat_oc = self.extractor_oc(x)
+        self.fp16 = True
+        with torch.cuda.amp.autocast(self.fp16):
+            # CNN
+            pat_id = self.extractor_id(x)
+            pat_oc = self.extractor_oc(x)
 
-        emb_id = self.to_patch_embedding_id(pat_id)
-        emb_oc = self.to_patch_embedding_oc(pat_oc)
+            emb_id = self.to_patch_embedding_id(pat_id)
+            emb_oc = self.to_patch_embedding_oc(pat_oc)
 
-        b, n, _ = emb_id.shape
+            b, n, _ = emb_id.shape
 
-        tokens_id = repeat(self.token_id, '() n d -> b n d', b = b)
-        tokens_oc = repeat(self.token_oc, '() n d -> b n d', b = b)
+            # Embedding[:, 0, :] insert token
+            tokens_id = repeat(self.token_id, '() n d -> b n d', b=b)
+            tokens_oc = repeat(self.token_oc, '() n d -> b n d', b=b)
 
-        emb_id = torch.cat((tokens_id, emb_id), dim=1)  # (b, n+1, d)
-        emb_oc = torch.cat((tokens_oc, emb_oc), dim=1)
+            emb_id = torch.cat((tokens_id, emb_id), dim=1)  # (b, n+1, d)
+            emb_oc = torch.cat((tokens_oc, emb_oc), dim=1)
 
-        # PE
-        emb_id += self.pe_id[:, :(n + 1)]
-        emb_oc += self.pe_id[:, :(n + 1)]
+            # PE
+            emb_id += self.pe_id[:, :(n + 1)]
+            emb_oc += self.pe_id[:, :(n + 1)]
 
-        emb_id = self.dropout(emb_id)
-        emb_oc = self.dropout(emb_oc)
+            emb_id = self.dropout(emb_id)
+            emb_oc = self.dropout(emb_oc)
 
-        emb_id = self.transformer(emb_id)
-        emb_oc = self.transformer(emb_oc)
+            # Transformer
+            emb_id, emb_oc = self.transformer(torch.cat((emb_id, emb_oc), dim=1))
 
-        out_id = emb_id[:, 0]
-        out_oc = emb_oc[:, 0]
+            out_id = emb_id[:, 0]
+            out_oc = emb_oc[:, 0]
 
         return self.mlp_head(out_id), self.mlp_head(out_oc)
 
@@ -338,13 +433,15 @@ class PEG(nn.Module):
 
 if __name__ == '__main__':
 
-    img = torch.randn(19, 3, 112, 112)
+    img = torch.randn(64, 3, 112, 112)
 
     dpt = DualPathTransformer(dim=512,
-                              depth=6,
+                              depth=3,
                               heads=8,
                               mlp_dim=512,
-                              num_classes=80000).cuda()
+                              num_classes=30000).cuda()
     feature_id, feature_oc = dpt(img.cuda())
     print(feature_id.shape, feature_oc.shape)
+    import time
+    time.sleep(5)
 

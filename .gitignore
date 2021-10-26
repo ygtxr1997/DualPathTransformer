@@ -130,3 +130,13 @@ dmypy.json
 
 # Pycharm
 .idea/
+
+# Mxnet
+.params
+.json
+
+# Pytorch
+.pth
+
+# Matlab
+.mat
