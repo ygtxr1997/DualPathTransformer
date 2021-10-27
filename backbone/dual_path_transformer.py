@@ -4,7 +4,7 @@ from torch import nn
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 
-__all__ = ['']
+__all__ = ['dpt_r18s3_ca3']
 
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
     """3x3 convolution with padding"""
@@ -137,6 +137,43 @@ class IResBackbone(nn.Module):
         x = self.layer3(x)
 
         return x
+
+
+from backbone.segmodel.large_kernel import _GlobalConvModule
+class SegmentHead(nn.Module):
+    def __init__(self,
+                 num_classes=2,
+                 kernel_size=7,
+                 dap_k=3,):
+        super(SegmentHead, self).__init__()
+
+        self.gcm1 = _GlobalConvModule(32, num_classes * 4, (kernel_size, kernel_size))
+
+        self.deconv1 = nn.ConvTranspose2d(num_classes * 4, num_classes * dap_k ** 2, kernel_size=3,
+                                          stride=2, padding=1, bias=False)
+        self.deconv2 = nn.ConvTranspose2d(num_classes * dap_k ** 2, num_classes * dap_k ** 2, kernel_size=4,
+                                          stride=2, padding=1, bias=False)
+        self.deconv3 = nn.ConvTranspose2d(num_classes * dap_k ** 2, num_classes * dap_k ** 2, kernel_size=4,
+                                          stride=2, padding=1, bias=False)
+        self.deconv4 = nn.ConvTranspose2d(num_classes * dap_k ** 2, num_classes * dap_k ** 2, kernel_size=4,
+                                          stride=2, padding=1, bias=False)
+        self.deconv5 = nn.ConvTranspose2d(num_classes * dap_k ** 2, num_classes * dap_k ** 2, kernel_size=4,
+                                          stride=2, padding=1, bias=False)
+
+        self.DAP = nn.Sequential(
+            nn.PixelShuffle(dap_k),
+            nn.AvgPool2d((dap_k, dap_k))
+        )
+
+    def forward(self, x):  # (32, 4, 4)
+        x = self.gcm1(x)  # (8, 4, 4)
+        x = self.deconv1(x)  # (2*9, 7, 7)
+        x = self.deconv2(x)  # (2*9, 14, 14)
+        x = self.deconv3(x)
+        x = self.deconv4(x)
+        x = self.deconv5(x)
+        x = self.DAP(x)
+        return x  # (2, 112, 112)
 
 
 class PreNorm(nn.Module):
@@ -336,6 +373,7 @@ class Transformer(nn.Module):
 
 class DualPathTransformer(nn.Module):
     def __init__(self,
+                 cnn_layers,
                  dim,
                  depth,
                  heads,
@@ -343,11 +381,13 @@ class DualPathTransformer(nn.Module):
                  num_classes,
                  emb_dropout=0.,
                  dim_head=64,
-                 dropout=0.):
+                 dropout=0.,
+                 fp16=False):
         super().__init__()
+        self.fp16 = fp16
 
-        self.extractor_id = IResBackbone(IBasicBlock, [3, 4, 14])
-        self.extractor_oc = IResBackbone(IBasicBlock, [3, 4, 14])
+        self.extractor_id = IResBackbone(IBasicBlock, cnn_layers)
+        self.extractor_oc = IResBackbone(IBasicBlock, cnn_layers)
 
         pattern_dim = 256
         self.to_patch_embedding_id = nn.Sequential(
@@ -369,13 +409,15 @@ class DualPathTransformer(nn.Module):
 
         self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim, dropout)
 
-        self.mlp_head = nn.Sequential(
+        self.id_to_out = nn.LayerNorm(dim)
+        self.oc_to_4d = nn.Sequential(
             nn.LayerNorm(dim),
-            nn.Linear(dim, num_classes)
+            Rearrange('b (c h w) -> b c h w', c=32, h=4),
         )
+        self.oc_head = SegmentHead(num_classes=2, kernel_size=7, dap_k=3)
+        self.id_head = nn.Linear(dim, num_classes)
 
     def forward(self, x):
-        self.fp16 = True
         with torch.cuda.amp.autocast(self.fp16):
             # CNN
             pat_id = self.extractor_id(x)
@@ -406,7 +448,14 @@ class DualPathTransformer(nn.Module):
             out_id = emb_id[:, 0]
             out_oc = emb_oc[:, 0]
 
-        return self.mlp_head(out_id), self.mlp_head(out_oc)
+            out_id = self.id_to_out(out_id).contiguous()
+            out_oc = self.oc_to_4d(out_oc).contiguous()
+
+        # Occ-Head
+        out_oc = self.oc_head(out_oc)
+        out_id = self.id_head(out_id)
+
+        return out_id, out_oc  # id:(b, dim), oc:(b, 2, 112, 112)
 
 
 """ Conditional Positional Encodings for Vision Transformers (arXiv 2021) """
@@ -426,17 +475,9 @@ class PEG(nn.Module):
         return x
 
 
-if __name__ == '__main__':
+def _dpt(arch, layers, **kwargs):
+    model = DualPathTransformer(layers, **kwargs)
+    return model
 
-    img = torch.randn(64, 3, 112, 112)
-
-    dpt = DualPathTransformer(dim=512,
-                              depth=5,
-                              heads=8,
-                              mlp_dim=512,
-                              num_classes=30000).cuda()
-    feature_id, feature_oc = dpt(img.cuda())
-    print(feature_id.shape, feature_oc.shape)
-    import time
-    time.sleep(5)
-
+def dpt_r18s3_ca3(pretrained=False, **kwargs):
+    return _dpt('dpt-tiny', [2, 2, 2], **kwargs)

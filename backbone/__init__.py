@@ -1,0 +1,1 @@
+from .dual_path_transformer import dpt_r18s3_ca3
