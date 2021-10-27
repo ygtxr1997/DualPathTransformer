@@ -4,11 +4,11 @@ config = edict()
 config.dataset = "ms1m-retinaface-t2"
 config.embedding_size = 512
 config.sample_rate = 1
-config.fp16 = False
+config.fp16 = True
 config.momentum = 0.9
 config.weight_decay = 5e-4
-config.batch_size = 64  # 128
-config.lr = 0.01 # 0.1 for batch size is 512
+config.batch_size = 128  # 128
+config.lr = 0.01  # 0.1 for batch size is 512
 config.output = "tmp"
 print('output path: ', config.output)
 

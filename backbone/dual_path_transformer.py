@@ -448,12 +448,12 @@ class DualPathTransformer(nn.Module):
             out_id = emb_id[:, 0]
             out_oc = emb_oc[:, 0]
 
-            out_id = self.id_to_out(out_id).contiguous()
-            out_oc = self.oc_to_4d(out_oc).contiguous()
+            out_id = self.id_to_out(out_id)
+            out_oc = self.oc_to_4d(out_oc)
 
-        # Occ-Head
-        out_oc = self.oc_head(out_oc)
-        out_id = self.id_head(out_id)
+            # Occ-Head
+            out_oc = self.oc_head(out_oc).contiguous()
+            out_id = self.id_head(out_id).contiguous()
 
         return out_id, out_oc  # id:(b, dim), oc:(b, 2, 112, 112)
 

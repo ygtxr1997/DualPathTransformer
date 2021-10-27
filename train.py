@@ -79,16 +79,16 @@ def main(args):
 
     dropout = 0.4 if cfg.dataset is "webface" else 0
     backbone = eval("backbone.{}".format(args.network))(False,
-                                                         fp16=cfg.fp16,
-                                                         num_classes=cfg.num_classes,
-                                                         dim=512,
-                                                         depth=1,
-                                                         heads=8,
-                                                         mlp_dim=512,
-                                                         emb_dropout=0.,
-                                                         dim_head=64,
-                                                         dropout=0.
-                                                         ).to(local_rank)
+                                                        fp16=cfg.fp16,
+                                                        num_classes=cfg.num_classes,
+                                                        dim=512,
+                                                        depth=1,
+                                                        heads=4,
+                                                        mlp_dim=256,
+                                                        emb_dropout=0.,
+                                                        dim_head=64,
+                                                        dropout=0.
+                                                        ).to(local_rank)
 
     if args.resume:
         try:
@@ -144,31 +144,42 @@ def main(args):
     seg_criterion = StructureConsensuLossFunction(10.0, 5.0, 'idx', 'idx')
     cls_criterion = torch.nn.CrossEntropyLoss()
 
+    from torch.cuda import amp
+    scaler = amp.GradScaler(enabled=cfg.fp16)
+
     for epoch in range(start_epoch, cfg.num_epoch):
         train_sampler.set_epoch(epoch)
         for step, (img, msk, label) in enumerate(train_loader):
         # for step, (img, label) in enumerate(train_loader):
             global_step += 1
 
-            [f_id, msk_final] = backbone(img)
-            f_id = F.normalize(f_id)
+            with amp.autocast(cfg.fp16):
+                [f_id, msk_final] = backbone(img)
+                f_id = F.normalize(f_id)
 
-            """ 1. occ """
-            with torch.no_grad():
-                msk_cc_var = Variable(msk.clone().cuda())
-            seg_loss = seg_criterion(msk_final, msk_cc_var, msk)
+                """ 1. occ """
+                with torch.no_grad():
+                    msk_cc_var = Variable(msk.clone().cuda())
+                seg_loss = seg_criterion(msk_final, msk_cc_var, msk)
 
-            """ 2. id """
-            with torch.no_grad():
-                label_var = Variable(label.cuda())
-            cls_loss = cls_criterion(f_id, label_var)
+                """ 2. id """
+                with torch.no_grad():
+                    label_var = Variable(label.cuda())
+                cls_loss = cls_criterion(f_id, label_var)
+
+                total_loss = 10 * seg_loss + cls_loss
 
             # backward
-            total_loss = 10 * seg_loss + cls_loss
             backbone.zero_grad()
             opt_backbone.zero_grad()
-            total_loss.backward()
-            opt_backbone.step()
+            scaler.scale(total_loss).backward()
+            scaler.step(opt_backbone)
+            scaler.update()
+
+            if global_step % 100 == 0 and rank == 0:
+                print('seg_loss=%.4f, cls_loss=%.4f'
+                      % (seg_loss, cls_loss))
+
             loss_v = total_loss
 
             # features = F.normalize(backbone(img))
@@ -205,7 +216,7 @@ def main(args):
 
         callback_checkpoint(global_step, backbone, module_partial_fc)
         scheduler_backbone.step()
-        scheduler_pfc.step()
+        # scheduler_pfc.step()
     dist.destroy_process_group()
 
 
