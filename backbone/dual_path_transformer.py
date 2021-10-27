@@ -65,10 +65,8 @@ class IResBackbone(nn.Module):
                  zero_init_residual=False,
                  groups=1,
                  width_per_group=64,
-                 replace_stride_with_dilation=None,
-                 fp16=False):
+                 replace_stride_with_dilation=None,):
         super(IResBackbone, self).__init__()
-        self.fp16 = fp16
         self.inplanes = 64
         self.dilation = 1
         if replace_stride_with_dilation is None:
@@ -90,8 +88,6 @@ class IResBackbone(nn.Module):
             self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dilate=False)
         if len(layers) >= 4:
             self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=False)
-
-
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -132,14 +128,13 @@ class IResBackbone(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        with torch.cuda.amp.autocast(self.fp16):
-            x = self.conv1(x)
-            x = self.bn1(x)
-            x = self.prelu(x)
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.prelu(x)
 
-            x = self.layer1(x)
-            x = self.layer2(x)
-            x = self.layer3(x)
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
 
         return x
 
@@ -351,8 +346,8 @@ class DualPathTransformer(nn.Module):
                  dropout=0.):
         super().__init__()
 
-        self.extractor_id = IResBackbone(IBasicBlock, [2, 2, 2])
-        self.extractor_oc = IResBackbone(IBasicBlock, [2, 2, 2])
+        self.extractor_id = IResBackbone(IBasicBlock, [3, 4, 14])
+        self.extractor_oc = IResBackbone(IBasicBlock, [3, 4, 14])
 
         pattern_dim = 256
         self.to_patch_embedding_id = nn.Sequential(
@@ -436,7 +431,7 @@ if __name__ == '__main__':
     img = torch.randn(64, 3, 112, 112)
 
     dpt = DualPathTransformer(dim=512,
-                              depth=3,
+                              depth=5,
                               heads=8,
                               mlp_dim=512,
                               num_classes=30000).cuda()
