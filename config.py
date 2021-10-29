@@ -7,9 +7,11 @@ config.sample_rate = 1
 config.fp16 = True
 config.momentum = 0.9
 config.weight_decay = 5e-4
-config.batch_size = 128  # 128
-config.lr = 0.01  # 0.1 for batch size is 512
-config.output = "tmp"
+config.batch_size = 256  # 128
+config.lr = 0.1  # 0.1 for batch size is 512
+
+config.exp_id = 7
+config.output = "tmp_" + str(config.exp_id)
 print('output path: ', config.output)
 
 
@@ -34,7 +36,7 @@ elif config.dataset == "ms1m-retinaface-t2":
     config.num_classes = 93431 # 91180
     config.num_epoch = 25
     config.warmup_epoch = -10 # -1
-    config.val_targets = [] #["lfw", "cfp_fp", ]  # ["lfw", "cfp_fp", "agedb_30"]
+    config.val_targets = ["lfw", "cfp_fp", ]  # ["lfw", "cfp_fp", "agedb_30"]
 
     def lr_step_func(epoch):
         return ((epoch + 1) / (4 + 1)) ** 2 if epoch < config.warmup_epoch else 0.1 ** len(

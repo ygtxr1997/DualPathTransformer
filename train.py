@@ -68,14 +68,13 @@ def main(args):
         gray=False,
         norm=True)
     # trainset = MXFaceDataset(
-    #     # root_dir=cfg.rec,
-    #     root_dir=dataset_path,
+    #     root_dir=cfg.rec,
     #     local_rank=local_rank)
     train_sampler = torch.utils.data.distributed.DistributedSampler(
         trainset, shuffle=True)
     train_loader = DataLoaderX(
         local_rank=local_rank, dataset=trainset, batch_size=cfg.batch_size,
-        sampler=train_sampler, num_workers=0, pin_memory=True, drop_last=True)
+        sampler=train_sampler, num_workers=4, pin_memory=True, drop_last=True)
 
     dropout = 0.4 if cfg.dataset is "webface" else 0
     backbone = eval("backbone.{}".format(args.network))(False,
@@ -83,8 +82,8 @@ def main(args):
                                                         num_classes=cfg.num_classes,
                                                         dim=512,
                                                         depth=1,
-                                                        heads=4,
-                                                        mlp_dim=256,
+                                                        heads=8,
+                                                        mlp_dim=512,
                                                         emb_dropout=0.,
                                                         dim_head=64,
                                                         dropout=0.
@@ -116,6 +115,14 @@ def main(args):
         params=[{'params': backbone.parameters()}],
         lr=cfg.lr / 512 * cfg.batch_size * world_size,
         momentum=0.9, weight_decay=cfg.weight_decay)
+    # opt_backbone = torch.optim.Adam(
+    #     params=[{'params': backbone.parameters()}],
+    #     lr=cfg.lr / 512 * cfg.batch_size * world_size,
+    #     betas=(0.9, 0.999),
+    #     eps=1e-08,
+    #     weight_decay=0.04,
+    #     amsgrad=False
+    # )
     opt_pfc = torch.optim.SGD(
         params=[{'params': module_partial_fc.parameters()}],
         lr=cfg.lr / 512 * cfg.batch_size * world_size,
@@ -145,7 +152,8 @@ def main(args):
     cls_criterion = torch.nn.CrossEntropyLoss()
 
     from torch.cuda import amp
-    scaler = amp.GradScaler(enabled=cfg.fp16)
+    scaler = amp.GradScaler(init_scale=cfg.batch_size,
+                            growth_interval=100, enabled=cfg.fp16)
 
     for epoch in range(start_epoch, cfg.num_epoch):
         train_sampler.set_epoch(epoch)
@@ -153,36 +161,42 @@ def main(args):
         # for step, (img, label) in enumerate(train_loader):
             global_step += 1
 
+            """ op1: full classes """
             with amp.autocast(cfg.fp16):
-                [f_id, msk_final] = backbone(img)
-                f_id = F.normalize(f_id)
+                # [f_id, msk_final] = backbone(img)
+                f_id = backbone(img)
+                # f_id = F.normalize(f_id)  # TODO: close normalize
 
                 """ 1. occ """
-                with torch.no_grad():
-                    msk_cc_var = Variable(msk.clone().cuda())
-                seg_loss = seg_criterion(msk_final, msk_cc_var, msk)
+                # with torch.no_grad():
+                #     msk_cc_var = Variable(msk.clone().cuda(non_blocking=True))
+                # seg_loss = seg_criterion(msk_final, msk_cc_var, msk)
+                seg_loss = 0.
 
                 """ 2. id """
-                with torch.no_grad():
-                    label_var = Variable(label.cuda())
-                cls_loss = cls_criterion(f_id, label_var)
+                cls_loss = cls_criterion(f_id, label)
 
-                total_loss = 10 * seg_loss + cls_loss
+                l1 = 3
+                total_loss = cls_loss + l1 * seg_loss
 
-            # backward
-            backbone.zero_grad()
+            if cfg.fp16:
+                grad_scaler.scale(total_loss).backward()
+                grad_scaler.unscale_(opt_backbone)
+                clip_grad_norm_(backbone.parameters(), max_norm=5, norm_type=2)
+                grad_scaler.step(opt_backbone)
+                grad_scaler.update()
+            else:
+                total_loss.backward()
+                clip_grad_norm_(backbone.parameters(), max_norm=5, norm_type=2)
+                opt_backbone.step()
             opt_backbone.zero_grad()
-            scaler.scale(total_loss).backward()
-            scaler.step(opt_backbone)
-            scaler.update()
-
-            if global_step % 100 == 0 and rank == 0:
-                print('seg_loss=%.4f, cls_loss=%.4f'
-                      % (seg_loss, cls_loss))
 
             loss_v = total_loss
+            """ end - CE loss """
 
-            # features = F.normalize(backbone(img))
+            """ op2. partial fc """
+            # features = backbone(img)
+            # # features = F.normalize(backbone(img))  # CosFace needs normalize
             # # from torchinfo import summary
             # # summary(backbone, input_size=(1, 3, 112, 112))
             # x_grad, loss_v = module_partial_fc.forward_backward(label, features, opt_pfc)
@@ -199,16 +213,33 @@ def main(args):
             #
             # opt_pfc.step()
             # module_partial_fc.update()
+            #
+            # # if global_step % 50 == 3:
+            # #     for name, params in backbone.named_parameters():
+            # #         if params.grad is not None:
+            # #             logging.info('-->name: %s, -->grad_val: %f,'
+            # #                          '-->max: %f, -->min:%f'
+            # #                          '' % (name, params.grad.data.cpu().mean(),
+            # #                                params.data.cpu().max(),
+            # #                                params.data.cpu().min()))
+            # #         else:
+            # #             logging.info('-->name: %s, -->grad: None' % (name))
+            #
             # opt_backbone.zero_grad()
             # opt_pfc.zero_grad()
+            # seg_loss = 0.
+            # cls_loss = loss_v
+            # l1 = 0.
+            """ end - partial fc"""
+
+            if global_step % 100 == 0 and rank == 0:
+                print('[exp_%d], seg_loss=%.4f, cls_loss=%.4f, scale=%.4f, lr=%.4f, l1=%.4f'
+                      % (cfg.exp_id, seg_loss, cls_loss, scaler.get_scale(), cfg.lr, l1))
 
             loss.update(loss_v, 1)
             callback_logging(global_step, loss, epoch, cfg.fp16, grad_scaler)
             callback_verification(global_step, backbone)
 
-            # for name, parms in backbone.named_parameters():
-            #     print('-->name:', name, '-->grad_requirs:', parms.requires_grad, \
-            #           ' -->grad_value:', parms.grad)
             if global_step % 1000 == 0:
                 for param_group in opt_backbone.param_groups:
                     lr = param_group['lr']
@@ -216,7 +247,7 @@ def main(args):
 
         callback_checkpoint(global_step, backbone, module_partial_fc)
         scheduler_backbone.step()
-        # scheduler_pfc.step()
+        scheduler_pfc.step()
     dist.destroy_process_group()
 
 

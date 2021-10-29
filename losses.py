@@ -23,20 +23,20 @@ class CosFace(nn.Module):
         m_hot = torch.zeros(index.size()[0], cosine.size()[1], device=cosine.device)
         m_hot.scatter_(1, label[index, None], self.m)
 
-        cosine.acos_()
-        import os
-        rank = -1 if __name__ == "__main__" else int(os.environ['RANK'])
-        self.cnt += 1
-        self.avg_min += cosine[index, label[index]].min().data.cpu()
-        self.avg_max += cosine[index, label[index]].max().data.cpu()
-        self.avg_avg += cosine[index, label[index]].mean().data.cpu()
-        if self.cnt % 100 == 0 and rank == 0:
-            import logging
-            logging.info('before:[%d],mean:[%.4f],range:[%.4f~%.4f]', self.cnt,
-                         self.avg_avg / self.cnt,
-                         self.avg_min / self.cnt,
-                         self.avg_max / self.cnt)
-        cosine.cos_()
+        # cosine.acos_()
+        # import os
+        # rank = -1 if __name__ == "__main__" else int(os.environ['RANK'])
+        # self.cnt += 1
+        # self.avg_min += cosine[index, label[index]].min().data.cpu()
+        # self.avg_max += cosine[index, label[index]].max().data.cpu()
+        # self.avg_avg += cosine[index, label[index]].mean().data.cpu()
+        # if self.cnt % 100 == 0 and rank == 0:
+        #     import logging
+        #     logging.info('before:[%d],mean:[%.4f],range:[%.4f~%.4f]', self.cnt,
+        #                  self.avg_avg / self.cnt,
+        #                  self.avg_min / self.cnt,
+        #                  self.avg_max / self.cnt)
+        # cosine.cos_()
 
         """ 1. vanilla """
         # cosine[index] -= m_hot
@@ -49,12 +49,13 @@ class CosFace(nn.Module):
         # cosine[index] -= m_hot
 
         """ 3. adaptive - subtract linear """
-        a = self.a
-        k = self.k
-        m_hot[range(0, index.size()[0]), label[index]] -= k * (cosine[index, label[index]].acos_() - a)
-        cosine[index] -= m_hot
+        # a = self.a
+        # k = self.k
+        # m_hot[range(0, index.size()[0]), label[index]] -= k * (cosine[index, label[index]].acos_() - a)
+        # cosine[index] -= m_hot
 
-        ret = cosine * self.s
+        # ret = cosine * self.s
+        ret = cosine * 1
         return ret
 
 

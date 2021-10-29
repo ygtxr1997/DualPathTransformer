@@ -4,7 +4,7 @@ from torch import nn
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 
-__all__ = ['dpt_r18s3_ca3']
+__all__ = ['ft_r18']
 
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
     """3x3 convolution with padding"""
@@ -181,29 +181,11 @@ class PreNorm(nn.Module):
                  dim,
                  fn):
         super().__init__()
-        self.norm = nn.LayerNorm(dim)
+        self.norm = nn.LayerNorm(dim, eps=1e-5)
         self.fn = fn
 
     def forward(self, x, **kwargs):
         return self.fn(self.norm(x), **kwargs)
-
-
-class PreNormDual(nn.Module):
-    def __init__(self,
-                 dim,
-                 fn):
-        super().__init__()
-        self.norm1 = nn.LayerNorm(dim)
-        self.norm2 = nn.LayerNorm(dim)
-        self.fn = fn
-
-    def forward(self, x, **kwargs):
-        _, hw, _ = x.shape
-        hw //= 2
-        x = torch.cat((self.norm1(x[:, :hw, :]),
-                       self.norm2(x[:, hw:, :])),
-                      dim=1)
-        return self.fn(x, **kwargs)
 
 
 class FeedForward(nn.Module):
@@ -221,23 +203,6 @@ class FeedForward(nn.Module):
         )
     def forward(self, x):
         return self.net(x)
-
-
-class FeedForwardDual(nn.Module):
-    def __init__(self,
-                 dim,
-                 hidden_dim,
-                 dropout=0.):
-        super().__init__()
-        self.ff1 = FeedForward(dim, hidden_dim, dropout)
-        self.ff2 = FeedForward(dim, hidden_dim, dropout)
-    def forward(self, x):
-        _, hw, _ = x.shape
-        hw //= 2
-        x = torch.cat((self.ff1(x[:, :hw, :]),
-                       self.ff2(x[:, hw:, :])),
-                      dim=1)
-        return x
 
 
 class Attention(nn.Module):
@@ -273,75 +238,6 @@ class Attention(nn.Module):
         return self.to_out(out)
 
 
-class AttentionDual(nn.Module):
-    def __init__(self,
-                 dim,
-                 heads=8,
-                 dim_head=64,
-                 dropout=0.):
-        super().__init__()
-        self.path1 = Attention(dim, heads, dim_head, dropout)
-        self.path2 = Attention(dim, heads, dim_head, dropout)
-
-    def forward(self, x):
-        _, hw, _ = x.shape
-        hw //= 2
-        x = torch.cat((self.path1(x[:, :hw, :]),
-                       self.path2(x[:, hw:, :])),
-                      dim=1)
-        return x
-
-
-class CrossAttention(nn.Module):
-    def __init__(self,
-                 dim,
-                 heads=8,
-                 dim_head=64,
-                 dropout=0.):
-        super().__init__()
-        inner_dim = dim_head * heads
-
-        self.heads = heads
-        self.scale = dim_head ** -0.5
-
-        self.attend = nn.Softmax(dim=-1)
-        self.to_qkv_id = nn.Linear(dim, inner_dim * 3, bias=False)
-        self.to_qkv_oc = nn.Linear(dim, inner_dim * 3, bias=False)
-
-        self.to_out_1 = nn.Sequential(
-            nn.Linear(inner_dim, dim),
-            nn.Dropout(dropout)
-        )
-        self.to_out_2 = nn.Sequential(
-            nn.Linear(inner_dim, dim),
-            nn.Dropout(dropout)
-        )
-
-    def forward(self, x):
-        _, hw, _ = x.shape
-        x_id, x_oc = x[:, :hw, :], x[:, hw:, :]
-
-        qkv_id = self.to_qkv_id(x_id).chunk(3, dim=-1)
-        q1, k1, v1 = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=self.heads), qkv_id)
-
-        qkv_oc = self.to_qkv_oc(x_oc).chunk(3, dim=-1)
-        q2, k2, v2 = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=self.heads), qkv_oc)
-
-        dots_1 = torch.matmul(q1, k2.transpose(-1, -2)) * self.scale
-        attn_1 = self.attend(dots_1)
-        out_1 = torch.matmul(attn_1, v2)
-        out_1 = rearrange(out_1, 'b h n d -> b n (h d)')
-
-        dots_2 = torch.matmul(q2, k1.transpose(-1, -2)) * self.scale
-        attn_2 = self.attend(dots_2)
-        out_2 = torch.matmul(attn_2, v1)
-        out_2 = rearrange(out_2, 'b h n d -> b n (h d)')
-
-        out_1 = self.to_out_1(out_1)
-        out_2 = self.to_out_2(out_2)
-
-        return torch.cat((out_1, out_2), dim=1)
-
 class Transformer(nn.Module):
     def __init__(self,
                  dim,
@@ -354,24 +250,22 @@ class Transformer(nn.Module):
         self.layers = nn.ModuleList([])
         for idx in range(depth):
             self.layers.append(nn.ModuleList([
-                PreNormDual(dim, AttentionDual(dim, heads=heads, dim_head=dim_head, dropout=dropout)),
-                PreNormDual(dim, FeedForwardDual(dim, mlp_dim, dropout=dropout)),
-                PreNormDual(dim, CrossAttention(dim, heads=heads, dim_head=dim_head, dropout=dropout)),
-                PreNormDual(dim, FeedForwardDual(dim, mlp_dim, dropout=dropout)),
+                PreNorm(dim, Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout)),
+                PreNorm(dim, FeedForward(dim, mlp_dim, dropout=dropout)),
+                PreNorm(dim, Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout)),
+                PreNorm(dim, FeedForward(dim, mlp_dim, dropout=dropout)),
             ]))
 
     def forward(self, x):
-        for sa, ff1, ca, ff2 in self.layers:
-            x = sa(x) + x
+        for sa1, ff1, sa2, ff2 in self.layers:
+            x = sa1(x) + x
             x = ff1(x) + x
-            x = ca(x) + x
+            x = sa2(x) + x
             x = ff2(x) + x
-        _, hw, _ = x.shape
-        hw //= 2
-        return x[:, :hw, :], x[:, hw:, :]
+        return x
 
 
-class DualPathTransformer(nn.Module):
+class FaceTransformer(nn.Module):
     def __init__(self,
                  cnn_layers,
                  dim,
@@ -387,37 +281,34 @@ class DualPathTransformer(nn.Module):
         self.fp16 = fp16
 
         self.extractor_id = IResBackbone(IBasicBlock, cnn_layers)
-        self.extractor_oc = IResBackbone(IBasicBlock, cnn_layers)
 
         pattern_dim = 256
         self.to_patch_embedding_id = nn.Sequential(
             Rearrange('b c h w -> b (h w) c'),
             nn.Linear(pattern_dim, dim)
         )
-        self.to_patch_embedding_oc = nn.Sequential(
-            Rearrange('b c h w -> b (h w) c'),
-            nn.Linear(pattern_dim, dim)
-        )
 
         self.token_id = nn.Parameter(torch.randn(1, 1, dim))
-        self.token_oc = nn.Parameter(torch.randn(1, 1, dim))
 
         self.pe_id = nn.Parameter(torch.randn(1, 14*14+1, dim))
-        self.pe_oc = nn.Parameter(torch.randn(1, 14*14+1, dim))
 
         self.dropout = nn.Dropout(emb_dropout)
 
         self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim, dropout)
 
         self.id_to_out = nn.Sequential(
-            nn.LayerNorm(dim),
+            nn.BatchNorm1d(dim, eps=1e-05),
+            nn.Linear(dim, dim)
         )
-        self.oc_to_4d = nn.Sequential(
-            nn.LayerNorm(dim),
-            Rearrange('b (c h w) -> b c h w', c=32, h=4),
-        )
-        self.oc_head = SegmentHead(num_classes=2, kernel_size=7, dap_k=3)
+        self.fc = nn.Linear(dim, dim)
+        self.features = nn.BatchNorm1d(dim, eps=1e-05)
+        nn.init.constant_(self.features.weight, 1.0)
+        self.features.weight.requires_grad = False
+
         self.id_head = nn.Linear(dim, num_classes)
+
+        from tricks.margin_losses import CosFace
+        self.loss = CosFace(in_features=dim, out_features=num_classes, device_id=[2, 3])
 
         for m in self.modules():
             if isinstance(m, nn.Linear):
@@ -425,8 +316,8 @@ class DualPathTransformer(nn.Module):
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
             elif isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.LayerNorm):
-                m.weight.data.fill_(1)
-                m.bias.data.zero_()
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.Conv2d):
                 nn.init.xavier_uniform_(m.weight.data)
                 if m.bias is not None:
@@ -436,44 +327,30 @@ class DualPathTransformer(nn.Module):
         with torch.cuda.amp.autocast(self.fp16):
             # CNN
             pat_id = self.extractor_id(x)
-            pat_oc = self.extractor_oc(x)
-
             emb_id = self.to_patch_embedding_id(pat_id)
-            emb_oc = self.to_patch_embedding_oc(pat_oc)
-
             b, n, _ = emb_id.shape
 
             # Embedding[:, 0, :] insert token
             tokens_id = repeat(self.token_id, '() n d -> b n d', b=b)
-            tokens_oc = repeat(self.token_oc, '() n d -> b n d', b=b)
-
             emb_id = torch.cat((tokens_id, emb_id), dim=1)  # (b, n+1, d)
-            emb_oc = torch.cat((tokens_oc, emb_oc), dim=1)
 
             # PE
             emb_id += self.pe_id[:, :(n + 1)]
-            emb_oc += self.pe_id[:, :(n + 1)]
-
             emb_id = self.dropout(emb_id)
-            emb_oc = self.dropout(emb_oc)
 
             # Transformer
-            emb_id, emb_oc = self.transformer(torch.cat((emb_id, emb_oc), dim=1))
+            emb_id = self.transformer(emb_id)
 
             emb_id = emb_id[:, 0]
-            emb_oc = emb_oc[:, 0]
 
-            emb_id = self.id_to_out(emb_id)
-            out_oc = self.oc_to_4d(emb_oc)
-
-        # Occ-Head
-        out_oc = out_oc.float() if self.fp16 else out_oc
-        emb_id = emb_id.float() if self.fp16 else emb_id
-        out_oc = self.oc_head(out_oc)
+        emb_id = self.fc(emb_id.float() if self.fp16 else emb_id)
+        emb_id = self.features(emb_id)
         out_id = self.id_head(emb_id)
 
+
+
         if self.training:
-            return out_id, out_oc  # id:(b, dim), oc:(b, 2, 112, 112)
+            return out_id  # id:(b, dim), oc:(b, 2, 112, 112)
         else:
             return emb_id
 
@@ -496,9 +373,9 @@ class PEG(nn.Module):
 
 
 def _dpt(arch, layers, **kwargs):
-    model = DualPathTransformer(layers, **kwargs)
+    model = FaceTransformer(layers, **kwargs)
     return model
 
 
-def dpt_r18s3_ca3(pretrained=False, **kwargs):
+def ft_r18(pretrained=False, **kwargs):
     return _dpt('dpt-tiny', [2, 2, 2], **kwargs)
