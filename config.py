@@ -7,10 +7,10 @@ config.sample_rate = 1
 config.fp16 = True
 config.momentum = 0.9
 config.weight_decay = 5e-4
-config.batch_size = 256  # 128
-config.lr = 0.1  # 0.1 for batch size is 512
+config.batch_size = 128  # 128
+config.lr = 1e-4  # 0.1 for batch size is 512
 
-config.exp_id = 7
+config.exp_id = 20
 config.output = "tmp_" + str(config.exp_id)
 print('output path: ', config.output)
 

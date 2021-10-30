@@ -82,8 +82,8 @@ def main(args):
                                                         num_classes=cfg.num_classes,
                                                         dim=512,
                                                         depth=1,
-                                                        heads=8,
-                                                        mlp_dim=512,
+                                                        heads=4,
+                                                        mlp_dim=256,
                                                         emb_dropout=0.,
                                                         dim_head=64,
                                                         dropout=0.
@@ -123,6 +123,14 @@ def main(args):
     #     weight_decay=0.04,
     #     amsgrad=False
     # )
+    opt_backbone = torch.optim.AdamW(
+        params=[{'params': backbone.parameters()}],
+        lr=cfg.lr / 512 * cfg.batch_size * world_size,
+        betas=(0.9, 0.999),
+        eps=1e-08,
+        weight_decay=0.04,
+        amsgrad=False
+    )
     opt_pfc = torch.optim.SGD(
         params=[{'params': module_partial_fc.parameters()}],
         lr=cfg.lr / 512 * cfg.batch_size * world_size,
@@ -164,7 +172,7 @@ def main(args):
             """ op1: full classes """
             with amp.autocast(cfg.fp16):
                 # [f_id, msk_final] = backbone(img)
-                f_id = backbone(img)
+                final_id = backbone(img, label)
                 # f_id = F.normalize(f_id)  # TODO: close normalize
 
                 """ 1. occ """
@@ -174,7 +182,7 @@ def main(args):
                 seg_loss = 0.
 
                 """ 2. id """
-                cls_loss = cls_criterion(f_id, label)
+                cls_loss = cls_criterion(final_id, label)
 
                 l1 = 3
                 total_loss = cls_loss + l1 * seg_loss
@@ -247,7 +255,7 @@ def main(args):
 
         callback_checkpoint(global_step, backbone, module_partial_fc)
         scheduler_backbone.step()
-        scheduler_pfc.step()
+        # scheduler_pfc.step()
     dist.destroy_process_group()
 
 

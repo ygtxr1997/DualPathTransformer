@@ -297,18 +297,21 @@ class FaceTransformer(nn.Module):
         self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim, dropout)
 
         self.id_to_out = nn.Sequential(
+            nn.LayerNorm(dim, eps=1e-05),
             nn.BatchNorm1d(dim, eps=1e-05),
-            nn.Linear(dim, dim)
+            # nn.Linear(dim, dim)
         )
         self.fc = nn.Linear(dim, dim)
         self.features = nn.BatchNorm1d(dim, eps=1e-05)
         nn.init.constant_(self.features.weight, 1.0)
-        self.features.weight.requires_grad = False
+        # self.features.weight.requires_grad = False
 
-        self.id_head = nn.Linear(dim, num_classes)
+        # self.id_head = nn.Linear(dim, num_classes)
 
-        from tricks.margin_losses import CosFace
-        self.loss = CosFace(in_features=dim, out_features=num_classes, device_id=[2, 3])
+        from tricks.margin_losses import CosFace, Softmax, ArcFace
+        self.loss = CosFace(in_features=dim, out_features=num_classes, device_id=None,
+                            m=0.35, s=64.0)
+        # self.loss = Softmax(in_features=dim, out_features=num_classes, device_id=None,)
 
         for m in self.modules():
             if isinstance(m, nn.Linear):
@@ -323,7 +326,7 @@ class FaceTransformer(nn.Module):
                 if m.bias is not None:
                     m.bias.data.zero_()
 
-    def forward(self, x):
+    def forward(self, x, label=None):
         with torch.cuda.amp.autocast(self.fp16):
             # CNN
             pat_id = self.extractor_id(x)
@@ -342,15 +345,27 @@ class FaceTransformer(nn.Module):
             emb_id = self.transformer(emb_id)
 
             emb_id = emb_id[:, 0]
+            emb_id = self.id_to_out(emb_id)  # [-4, 4], norm=22
 
-        emb_id = self.fc(emb_id.float() if self.fp16 else emb_id)
+        """ op1. vit """
+        # emb_id = emb_id.float() if self.fp16 else emb_id
+        # emb_id = self.id_to_out(emb_id)
+        """ op2. arcface """
+        # x_copy = emb_id.detach()
+        # print('emb_min:', x_copy.min(),'emb_max', x_copy.max(),'emb_mean', x_copy.mean())
+        # copy_norm = x_copy * x_copy
+        # norm_norm = torch.nn.functional.normalize(x_copy)
+        # norm_norm = norm_norm * norm_norm
+        # print('norm:', torch.sqrt(copy_norm[0].sum()),
+        #       'after normal norm:', torch.sqrt(norm_norm[0].sum()),
+        #       'shape', x_copy.shape)
+        emb_id = emb_id.float() if self.fp16 else emb_id
+        emb_id = self.fc(emb_id)
         emb_id = self.features(emb_id)
-        out_id = self.id_head(emb_id)
-
-
 
         if self.training:
-            return out_id  # id:(b, dim), oc:(b, 2, 112, 112)
+            final = self.loss(emb_id, label)
+            return final  # id:(b, dim), oc:(b, 2, 112, 112)
         else:
             return emb_id
 

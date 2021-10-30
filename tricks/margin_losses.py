@@ -4,7 +4,9 @@ from einops import rearrange, repeat
 from torch import nn
 
 from torch.nn import Parameter
-from IPython import embed
+# from IPython import embed
+
+import numpy as np
 
 MIN_NUM_PATCHES = 16
 
@@ -29,7 +31,8 @@ class Softmax(nn.Module):
 
     def forward(self, input, label):
         if self.device_id == None:
-            out = F.linear(x, self.weight, self.bias)
+            # out = F.linear(x, self.weight, self.bias)
+            out = F.linear(F.normalize(input), F.normalize(self.weight)) * 64.
         else:
             x = input
             sub_weights = torch.chunk(self.weight, len(self.device_id), dim=0)
@@ -89,10 +92,10 @@ class ArcFace(nn.Module):
         nn.init.xavier_uniform_(self.weight)
 
         self.easy_margin = easy_margin
-        self.cos_m = math.cos(m)
-        self.sin_m = math.sin(m)
-        self.th = math.cos(math.pi - m)
-        self.mm = math.sin(math.pi - m) * m
+        self.cos_m = np.cos(m)
+        self.sin_m = np.sin(m)
+        self.th = np.cos(np.pi - m)
+        self.mm = np.sin(np.pi - m) * m
 
     def forward(self, input, label):
         # --------------------------- cos(theta) & phi(theta) ---------------------------
@@ -119,6 +122,8 @@ class ArcFace(nn.Module):
         one_hot = torch.zeros(cosine.size())
         if self.device_id != None:
             one_hot = one_hot.cuda(self.device_id[0])
+        else:
+            one_hot = one_hot.cuda()
         one_hot.scatter_(1, label.view(-1, 1).long(), 1)
         # -------------torch.where(out_i = {x_i if condition_i else y_i) -------------
         output = (one_hot * phi) + (
@@ -142,6 +147,7 @@ class CosFace(nn.Module):
 
     def __init__(self, in_features, out_features, device_id, s=64.0, m=0.35):
         super(CosFace, self).__init__()
+        print('CosFace, s=%.1f, m=%.2f' % (s, m))
         self.in_features = in_features
         self.out_features = out_features
         self.device_id = device_id
@@ -169,12 +175,13 @@ class CosFace(nn.Module):
                                    dim=1)
         phi = cosine - self.m
         # --------------------------- convert label to one-hot ---------------------------
-        one_hot = torch.zeros(cosine.size())
+        one_hot = torch.zeros(cosine.size()).cuda()
         if self.device_id != None:
             one_hot = one_hot.cuda(self.device_id[0])
         # one_hot = one_hot.cuda() if cosine.is_cuda else one_hot
-
-        one_hot.scatter_(1, label.cuda(self.device_id[0]).view(-1, 1).long(), 1)
+            one_hot.scatter_(1, label.cuda(self.device_id[0]).view(-1, 1).long(), 1)
+        else:
+            one_hot.scatter_(1, label.view(-1, 1).long(), 1)
         # -------------torch.where(out_i = {x_i if condition_i else y_i) -------------
         output = (one_hot * phi) + (
                     (1.0 - one_hot) * cosine)  # you can use torch.where if your torch.__version__ is 0.4
