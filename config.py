@@ -8,9 +8,9 @@ config.fp16 = True
 config.momentum = 0.9
 config.weight_decay = 5e-4
 config.batch_size = 128  # 128
-config.lr = 1e-4  # 0.1 for batch size is 512
+config.lr = 2e-4  # 0.1 for batch size is 512
 
-config.exp_id = 20
+config.exp_id = 21
 config.output = "tmp_" + str(config.exp_id)
 print('output path: ', config.output)
 
@@ -59,7 +59,7 @@ elif config.dataset == "ms1m-retinaface-t2":
         return lr_fun_cos(cur_epoch=epoch)
         # return cur_lr / config.lr
 
-    config.lr_func = lr_step_func
+    config.lr_func = lr_step_func_cos
 
 elif config.dataset == "glint360k":
     # make training faster

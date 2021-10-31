@@ -246,9 +246,18 @@ class Glasses(object):
         self.glasses_list = os.listdir(glasses_path)
         self.glasses_num = len(self.glasses_list)
 
+        print('-> prepare glasses_occ ...')
+        self.object_imgs = []
+        for idx in range(self.glasses_num):
+            object_path = os.path.join(self.glasses_root, self.glasses_list[idx])
+            object = Image.open(object_path).convert('RGBA')
+            self.object_imgs.append(object)
+        print('-> loaded %d images' % self.glasses_num)
+
     def __call__(self, img):
-        glasses_path = os.path.join(self.glasses_root, self.glasses_list[random.randint(0, self.glasses_num - 1)])
-        glasses = Image.open(glasses_path).convert('RGBA')
+        # glasses_path = os.path.join(self.glasses_root, self.glasses_list[random.randint(0, self.glasses_num - 1)])
+        # glasses = Image.open(glasses_path).convert('RGBA')
+        glasses = self.object_imgs[random.randint(0, self.glasses_num - 1)]
         scale_ratio = 0.8 * img.size[0] / glasses.size[0]
         glasses = glasses.resize((int(scale_ratio * glasses.size[0]), int(scale_ratio * glasses.size[1])))
 
@@ -284,9 +293,18 @@ class Scarf(object):
         self.scarf_list = os.listdir(scarf_path)
         self.scarf_num = len(self.scarf_list)
 
+        print('-> prepare scarf_occ ...')
+        self.object_imgs = []
+        for idx in range(self.scarf_num):
+            object_path = os.path.join(self.scarf_root, self.scarf_list[idx])
+            object = Image.open(object_path).convert('RGBA')
+            self.object_imgs.append(object)
+        print('-> loaded %d images' % self.scarf_num)
+
     def __call__(self, img):
-        scarf_path = os.path.join(self.scarf_root, self.scarf_list[random.randint(0, self.scarf_num - 1)])
-        scarf = Image.open(scarf_path).convert('RGBA')
+        # scarf_path = os.path.join(self.scarf_root, self.scarf_list[random.randint(0, self.scarf_num - 1)])
+        # scarf = Image.open(scarf_path).convert('RGBA')
+        scarf = self.object_imgs[random.randint(0, self.scarf_num - 1)]
         scarf = scarf.resize(img.size)
 
         alpha = np.array(scarf)[:, :, -1]  # channel A
@@ -324,9 +342,18 @@ class RandomTrueObject(object):
         self.object_list = os.listdir(object_path)
         self.object_num = len(self.object_list)
 
+        print('-> prepare object_occ ...')
+        self.object_imgs = []
+        for idx in range(self.object_num):
+            object_path = os.path.join(self.object_root, self.object_list[idx])
+            object = Image.open(object_path).convert('RGBA')
+            self.object_imgs.append(object)
+        print('-> loaded %d images' % self.object_num)
+
     def __call__(self, img):
-        object_path = os.path.join(self.object_root, self.object_list[random.randint(0, self.object_num - 1)])
-        object = Image.open(object_path).convert('RGBA')
+        # object_path = os.path.join(self.object_root, self.object_list[random.randint(0, self.object_num - 1)])
+        # object = Image.open(object_path).convert('RGBA')
+        object = self.object_imgs[random.randint(0, self.object_num - 1)]
         scale_ratio = (random.randint(40, 50) / 100) * img.size[0] / object.size[0]
         object = object.resize((int(scale_ratio * object.size[0]),
                               int(scale_ratio * object.size[1])))
