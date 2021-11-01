@@ -72,7 +72,7 @@ def main(args):
     #     local_rank=local_rank)
     train_sampler = torch.utils.data.distributed.DistributedSampler(
         trainset, shuffle=True)
-    nw = 8
+    nw = 4
     train_loader = DataLoaderX(
         local_rank=local_rank, dataset=trainset, batch_size=cfg.batch_size,
         sampler=train_sampler, num_workers=nw, pin_memory=True, drop_last=True)
@@ -168,6 +168,11 @@ def main(args):
         train_sampler.set_epoch(epoch)
         for step, (img, msk, label) in enumerate(train_loader):
         # for step, (img, label) in enumerate(train_loader):
+            with torch.no_grad():
+                img = img.cuda(non_blocking=True)
+                msk = msk.cuda(non_blocking=True)
+                label = label.cuda(non_blocking=True)
+
             global_step += 1
             # if global_step % 100 == 0:
             #     print('rank:', rank, time.strftime("[%Y-%m-%d-%H_%M_%S]", time.localtime()), global_step)

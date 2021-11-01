@@ -1,8 +1,11 @@
 import torch
 
 from backbone.dual_path_transformer import DualPathTransformer
+import config as cfg
 
-img = torch.randn(64, 3, 112, 112)
+from thop import profile
+
+img = torch.randn(1, 3, 112, 112)
 
 # dpt = DualPathTransformer(cnn_layers=[2, 2, 2],
 #                           dim=512,
@@ -17,14 +20,22 @@ img = torch.randn(64, 3, 112, 112)
 from backbone.face_transformer import FaceTransformer
 
 ft = FaceTransformer(cnn_layers=[2, 2, 2],
+                     num_classes=93431,
                      dim=512,
-                     depth=1,
+                     depth=2,
                      heads=8,
-                     mlp_dim=256,
-                     num_classes=100000,
-                     fp16=True).cuda()
-feature_id = ft(img.cuda())
-print(feature_id.shape)
+                     mlp_dim=512,
+                     emb_dropout=0.,
+                     dim_head=64,
+                     dropout=0.,
+                     fp16=False).cuda()
+# feature_id = ft(img.cuda())
+# print(feature_id.shape)
+macs, params = profile(ft, inputs=(img.cuda(), ))
+
+from thop import clever_format
+macs, params = clever_format([macs, params], "%.3f")
+print(params, macs)
 
 import time
 time.sleep(5)
