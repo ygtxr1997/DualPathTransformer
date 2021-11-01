@@ -23,7 +23,7 @@ from backbone.face_transformer import FaceTransformer
 ft = FaceTransformer(cnn_layers=[2, 2, 2],
                      num_classes=93431,
                      dim=512,
-                     depth=1,
+                     depth=4,
                      heads=8,
                      mlp_dim=512,
                      emb_dropout=0.,
