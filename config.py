@@ -10,7 +10,7 @@ config.weight_decay = 5e-4
 config.batch_size = 128  # 128
 config.lr = 2e-4  # 0.1 for batch size is 512
 
-config.exp_id = 21
+config.exp_id = 22
 config.output = "tmp_" + str(config.exp_id)
 print('output path: ', config.output)
 

@@ -72,9 +72,10 @@ def main(args):
     #     local_rank=local_rank)
     train_sampler = torch.utils.data.distributed.DistributedSampler(
         trainset, shuffle=True)
+    nw = 8
     train_loader = DataLoaderX(
         local_rank=local_rank, dataset=trainset, batch_size=cfg.batch_size,
-        sampler=train_sampler, num_workers=4, pin_memory=True, drop_last=True)
+        sampler=train_sampler, num_workers=nw, pin_memory=True, drop_last=True)
 
     dropout = 0.4 if cfg.dataset is "webface" else 0
     backbone = eval("backbone.{}".format(args.network))(False,
@@ -82,8 +83,8 @@ def main(args):
                                                         num_classes=cfg.num_classes,
                                                         dim=512,
                                                         depth=1,
-                                                        heads=4,
-                                                        mlp_dim=256,
+                                                        heads=8,
+                                                        mlp_dim=512,
                                                         emb_dropout=0.,
                                                         dim_head=64,
                                                         dropout=0.
@@ -111,10 +112,10 @@ def main(args):
         batch_size=cfg.batch_size, margin_softmax=margin_softmax, num_classes=cfg.num_classes,
         sample_rate=cfg.sample_rate, embedding_size=cfg.embedding_size, prefix=cfg.output)
 
-    opt_backbone = torch.optim.SGD(
-        params=[{'params': backbone.parameters()}],
-        lr=cfg.lr / 512 * cfg.batch_size * world_size,
-        momentum=0.9, weight_decay=cfg.weight_decay)
+    # opt_backbone = torch.optim.SGD(
+    #     params=[{'params': backbone.parameters()}],
+    #     lr=cfg.lr / 512 * cfg.batch_size * world_size,
+    #     momentum=0.9, weight_decay=cfg.weight_decay)
     # opt_backbone = torch.optim.Adam(
     #     params=[{'params': backbone.parameters()}],
     #     lr=cfg.lr / 512 * cfg.batch_size * world_size,
@@ -168,6 +169,8 @@ def main(args):
         for step, (img, msk, label) in enumerate(train_loader):
         # for step, (img, label) in enumerate(train_loader):
             global_step += 1
+            # if global_step % 100 == 0:
+            #     print('rank:', rank, time.strftime("[%Y-%m-%d-%H_%M_%S]", time.localtime()), global_step)
 
             """ op1: full classes """
             with amp.autocast(cfg.fp16):
@@ -241,8 +244,9 @@ def main(args):
             """ end - partial fc"""
 
             if global_step % 100 == 0 and rank == 0:
-                print('[exp_%d], seg_loss=%.4f, cls_loss=%.4f, scale=%.4f, lr=%.4f, l1=%.4f'
-                      % (cfg.exp_id, seg_loss, cls_loss, scaler.get_scale(), cfg.lr, l1))
+                print('[exp_%d], seg_loss=%.4f, cls_loss=%.4f, scale=%.4f, lr=%.4f, l1=%.4f, '
+                      'num_workers=%d'
+                      % (cfg.exp_id, seg_loss, cls_loss, scaler.get_scale(), cfg.lr, l1, nw))
 
             loss.update(loss_v, 1)
             callback_logging(global_step, loss, epoch, cfg.fp16, grad_scaler)
