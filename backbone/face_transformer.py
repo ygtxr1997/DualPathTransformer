@@ -194,6 +194,8 @@ class FeedForward(nn.Module):
                  hidden_dim,
                  dropout=0.):
         super().__init__()
+        self.dim = dim
+        self.hidden_dim = hidden_dim
         self.net = nn.Sequential(
             nn.Linear(dim, hidden_dim),
             nn.GELU(),
@@ -203,7 +205,12 @@ class FeedForward(nn.Module):
         )
     def forward(self, x):
         return self.net(x)
-
+    def cnt_flops(m, x, y):
+        x = x[0]  # (b, hw+1, dim)
+        hw = x.shape[-2]
+        flops = hw * 2. * m.dim * m.hidden_dim
+        flops += hw * 2. * m.hidden_dim * m.dim
+        m.total_ops += flops
 
 class Attention(nn.Module):
     def __init__(self,
@@ -213,6 +220,9 @@ class Attention(nn.Module):
                  dropout=0.):
         super().__init__()
         inner_dim = dim_head * heads
+        self.inner_dim = inner_dim
+        self.dim = dim
+        self.dim_head = dim_head
 
         self.heads = heads
         self.scale = dim_head ** -0.5
@@ -236,6 +246,14 @@ class Attention(nn.Module):
         out = torch.matmul(attn, v)
         out = rearrange(out, 'b h n d -> b n (h d)')
         return self.to_out(out)
+
+    def cnt_flops(m, x, y):
+        x = x[0]  # (b, n+1, dim)
+        flops = 3. * 2. * m.inner_dim * m.dim * x.shape[-2]
+        flops += 2. * m.heads * (m.dim_head ** 2) * x.shape[1]
+        flops += 2. * m.heads * m.dim_head * (x.shape[1] ** 2)
+        flops += 2. * m.inner_dim * m.dim * y.shape[-2]
+        m.total_ops += flops
 
 
 class Transformer(nn.Module):
@@ -351,14 +369,6 @@ class FaceTransformer(nn.Module):
         # emb_id = emb_id.float() if self.fp16 else emb_id
         # emb_id = self.id_to_out(emb_id)
         """ op2. arcface """
-        # x_copy = emb_id.detach()
-        # print('emb_min:', x_copy.min(),'emb_max', x_copy.max(),'emb_mean', x_copy.mean())
-        # copy_norm = x_copy * x_copy
-        # norm_norm = torch.nn.functional.normalize(x_copy)
-        # norm_norm = norm_norm * norm_norm
-        # print('norm:', torch.sqrt(copy_norm[0].sum()),
-        #       'after normal norm:', torch.sqrt(norm_norm[0].sum()),
-        #       'shape', x_copy.shape)
         emb_id = emb_id.float() if self.fp16 else emb_id
         emb_id = self.fc(emb_id)
         emb_id = self.features(emb_id)

@@ -145,7 +145,7 @@ class CosFace(nn.Module):
         cos(theta)-m
     """
 
-    def __init__(self, in_features, out_features, device_id, s=64.0, m=0.35):
+    def __init__(self, in_features, out_features, device_id, s=64.0, m=0.4):
         super(CosFace, self).__init__()
         print('CosFace, s=%.1f, m=%.2f' % (s, m))
         self.in_features = in_features
@@ -153,7 +153,6 @@ class CosFace(nn.Module):
         self.device_id = device_id
         self.s = s
         self.m = m
-        print("self.device_id", self.device_id)
         self.weight = Parameter(torch.FloatTensor(out_features, in_features))
         nn.init.xavier_uniform_(self.weight)
 

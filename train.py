@@ -12,7 +12,7 @@ from torch.nn.utils import clip_grad_norm_
 import utils
 import backbone
 import losses
-from config import config as cfg
+from config import cfg
 from dataset.dataset_arcface import MXFaceDataset, DataLoaderX
 from tricks.partial_fc import PartialFC
 from utils.utils_callbacks import CallBackVerification, CallBackLogging, CallBackModelCheckpoint
@@ -72,7 +72,7 @@ def main(args):
     #     local_rank=local_rank)
     train_sampler = torch.utils.data.distributed.DistributedSampler(
         trainset, shuffle=True)
-    nw = 4
+    nw = 8
     train_loader = DataLoaderX(
         local_rank=local_rank, dataset=trainset, batch_size=cfg.batch_size,
         sampler=train_sampler, num_workers=nw, pin_memory=True, drop_last=True)
@@ -81,13 +81,13 @@ def main(args):
     backbone = eval("backbone.{}".format(args.network))(False,
                                                         fp16=cfg.fp16,
                                                         num_classes=cfg.num_classes,
-                                                        dim=512,
-                                                        depth=1,
-                                                        heads=8,
-                                                        mlp_dim=512,
-                                                        emb_dropout=0.,
-                                                        dim_head=64,
-                                                        dropout=0.
+                                                        dim=cfg.model_set.dim,
+                                                        depth=cfg.model_set.depth,
+                                                        heads=cfg.model_set.heads,
+                                                        mlp_dim=cfg.model_set.mlp_dim,
+                                                        emb_dropout=cfg.model_set.emb_dropout,
+                                                        dim_head=cfg.model_set.dim_head,
+                                                        dropout=cfg.model_set.dropout
                                                         ).to(local_rank)
 
     if args.resume:
@@ -168,11 +168,6 @@ def main(args):
         train_sampler.set_epoch(epoch)
         for step, (img, msk, label) in enumerate(train_loader):
         # for step, (img, label) in enumerate(train_loader):
-            with torch.no_grad():
-                img = img.cuda(non_blocking=True)
-                msk = msk.cuda(non_blocking=True)
-                label = label.cuda(non_blocking=True)
-
             global_step += 1
             # if global_step % 100 == 0:
             #     print('rank:', rank, time.strftime("[%Y-%m-%d-%H_%M_%S]", time.localtime()), global_step)
