@@ -243,23 +243,25 @@ class RandomConnectedOval(object):
 class Glasses(object):
     def __init__(self, glasses_path='in/occluder/glasses_crop/'):
         self.glasses_root = glasses_path
-        self.glasses_list = os.listdir(glasses_path)
+        self.glasses_list = np.array(os.listdir(glasses_path))
         self.glasses_num = len(self.glasses_list)
 
         print('-> prepare glasses_occ ...')
-        self.object_imgs = []
+        self.object_imgs = np.zeros((self.glasses_num, 40, 89, 4))
         for idx in range(self.glasses_num):
             object_path = os.path.join(self.glasses_root, self.glasses_list[idx])
-            object = Image.open(object_path).convert('RGBA')
-            self.object_imgs.append(object)
+            object = Image.open(object_path).convert('RGBA')  # [w, h]: (125 * 40+)
+            object = object.resize((89, 40))
+            self.object_imgs[idx] = np.array(object)  # [h, w, c]
         print('-> loaded %d images' % self.glasses_num)
 
     def __call__(self, img):
         # glasses_path = os.path.join(self.glasses_root, self.glasses_list[random.randint(0, self.glasses_num - 1)])
         # glasses = Image.open(glasses_path).convert('RGBA')
         glasses = self.object_imgs[random.randint(0, self.glasses_num - 1)]
-        scale_ratio = 0.8 * img.size[0] / glasses.size[0]
-        glasses = glasses.resize((int(scale_ratio * glasses.size[0]), int(scale_ratio * glasses.size[1])))
+        glasses = Image.fromarray(glasses.astype('uint8')).convert('RGBA')
+        # scale_ratio = 0.8 * img.size[0] / glasses.size[0]
+        # glasses = glasses.resize((int(scale_ratio * glasses.size[0]), int(scale_ratio * glasses.size[1])))
 
         alpha = np.array(glasses)[:, :, -1]  # channel A
         channel = 1 if len(img.split()) == 2 else 3
@@ -290,22 +292,23 @@ class Glasses(object):
 class Scarf(object):
     def __init__(self, scarf_path='in/occluder/scarf_crop/'):
         self.scarf_root = scarf_path
-        self.scarf_list = os.listdir(scarf_path)
+        self.scarf_list = np.array(os.listdir(scarf_path))
         self.scarf_num = len(self.scarf_list)
 
         print('-> prepare scarf_occ ...')
-        self.object_imgs = []
+        self.object_imgs = np.zeros((self.scarf_num, 112, 112, 4))
         for idx in range(self.scarf_num):
             object_path = os.path.join(self.scarf_root, self.scarf_list[idx])
             object = Image.open(object_path).convert('RGBA')
-            self.object_imgs.append(object)
+            object = object.resize((112, 112))
+            self.object_imgs[idx] = np.array(object)
         print('-> loaded %d images' % self.scarf_num)
 
     def __call__(self, img):
         # scarf_path = os.path.join(self.scarf_root, self.scarf_list[random.randint(0, self.scarf_num - 1)])
         # scarf = Image.open(scarf_path).convert('RGBA')
         scarf = self.object_imgs[random.randint(0, self.scarf_num - 1)]
-        scarf = scarf.resize(img.size)
+        scarf = Image.fromarray(scarf.astype('uint8')).convert('RGBA')
 
         alpha = np.array(scarf)[:, :, -1]  # channel A
         channel = 1 if len(img.split()) == 2 else 3
@@ -339,21 +342,23 @@ class Scarf(object):
 class RandomTrueObject(object):
     def __init__(self, object_path='/home/yuange/code/SelfServer/dongjiayu-light/in/occluder/object'):
         self.object_root = object_path
-        self.object_list = os.listdir(object_path)
+        self.object_list = np.array(os.listdir(object_path))
         self.object_num = len(self.object_list)
 
         print('-> prepare object_occ ...')
-        self.object_imgs = []
+        self.object_imgs = np.zeros((self.object_num, 112, 112, 4))
         for idx in range(self.object_num):
             object_path = os.path.join(self.object_root, self.object_list[idx])
             object = Image.open(object_path).convert('RGBA')
-            self.object_imgs.append(object)
+            object = object.resize((112, 112))
+            self.object_imgs[idx] = np.array(object)
         print('-> loaded %d images' % self.object_num)
 
     def __call__(self, img):
         # object_path = os.path.join(self.object_root, self.object_list[random.randint(0, self.object_num - 1)])
         # object = Image.open(object_path).convert('RGBA')
         object = self.object_imgs[random.randint(0, self.object_num - 1)]
+        object = Image.fromarray(object.astype('uint8')).convert('RGBA')
         scale_ratio = (random.randint(40, 50) / 100) * img.size[0] / object.size[0]
         object = object.resize((int(scale_ratio * object.size[0]),
                               int(scale_ratio * object.size[1])))

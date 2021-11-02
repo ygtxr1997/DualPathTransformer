@@ -73,11 +73,11 @@ class FaceRandOccMask(data.Dataset):
         self.gray = gray
         self.norm = norm
 
-        self.trans_occ = [BaseTrans(), RandomRecOcc(),
-                          RandomConnectedOval(), RandomConnectedPolygon(),
-                          RandomTrueObject('./resources/occ/object'),
-                          Glasses('./resources/occ/glasses_crop/'),
-                          Scarf('./resources/occ/scarf_crop/')]
+        self.trans_occ = np.array([BaseTrans(), RandomRecOcc(),
+                                  RandomConnectedOval(), RandomConnectedPolygon(),
+                                  RandomTrueObject('./resources/occ/object'),
+                                  Glasses('./resources/occ/glasses_crop/'),
+                                  Scarf('./resources/occ/scarf_crop/')])
         self.is_train = is_train
 
         self.avg_time1 = AverageMeter()
