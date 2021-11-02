@@ -191,6 +191,27 @@ def main(args):
                 l1 = 1
                 total_loss = cls_loss + l1 * seg_loss
 
+            if global_step % 5 == 0 and True:
+                import numpy as np
+                import PIL.Image as Image
+                i = global_step
+                # save snapshot for mask learning
+                snapshot = np.zeros((112, 112, 3), dtype=np.uint8)
+                snapshot[:, :, 0] = (img[0][0].cpu().data.numpy() + 1.0) * 127.5
+                snapshot[:, :, 1] = (img[0][1].cpu().data.numpy() + 1.0) * 127.5
+                snapshot[:, :, 2] = (img[0][2].cpu().data.numpy() + 1.0) * 127.5
+                snapshot = Image.fromarray(snapshot.astype(np.uint8))
+                snapshot.save(
+                    os.path.join(cfg.output, 'snapshot/' + str(i) + '_face.jpg'))
+
+                mask = (msk_final[0].float().cpu().max(0)[1].data.numpy()) * 255
+                mask = Image.fromarray(mask.astype(np.uint8))
+                mask.save(os.path.join(cfg.output, 'snapshot/' + str(i) + '_seg.jpg'))
+
+                gt_msk = (msk[0].cpu().data.numpy()) * 255
+                gt_msk = Image.fromarray(gt_msk.astype(np.uint8))
+                gt_msk.save(os.path.join(cfg.output, 'snapshot/' + str(i) + '_gt_occ.jpg'))
+
             if cfg.fp16:
                 grad_scaler.scale(total_loss).backward()
                 grad_scaler.unscale_(opt_backbone)

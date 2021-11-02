@@ -58,15 +58,16 @@ class IBasicBlock(nn.Module):
         out += identity
         return out
 
-class IResBackbone(nn.Module):
+class IResBackboneSeg(nn.Module):
     def __init__(self,
                  block,
                  layers,
                  zero_init_residual=False,
                  groups=1,
                  width_per_group=64,
-                 replace_stride_with_dilation=None,):
-        super(IResBackbone, self).__init__()
+                 replace_stride_with_dilation=None,
+                 conv1_stride=1):
+        super(IResBackboneSeg, self).__init__()
         self.inplanes = 64
         self.dilation = 1
         if replace_stride_with_dilation is None:
@@ -77,7 +78,7 @@ class IResBackbone(nn.Module):
 
         self.groups = groups
         self.base_width = width_per_group
-        self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=3, stride=1, padding=1, bias=False)
+        self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=3, stride=conv1_stride, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(self.inplanes, eps=1e-05)
         self.prelu = nn.PReLU(self.inplanes)
 
@@ -128,15 +129,20 @@ class IResBackbone(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+        x_feats = []
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.prelu(x)
+        x_feats.append(x)  # x0: (64, 56, 56)
 
         x = self.layer1(x)
+        x_feats.append(x)  # x1: (64, 28, 28)
         x = self.layer2(x)
+        x_feats.append(x)  # x2: (128, 14, 14)
         x = self.layer3(x)
+        x_feats.append(x)  # x3: (256, 7, 7)
 
-        return x
+        return x_feats
 
 
 from backbone.segmodel.large_kernel import _GlobalConvModule
@@ -148,16 +154,20 @@ class SegmentHead(nn.Module):
         super(SegmentHead, self).__init__()
 
         self.gcm1 = _GlobalConvModule(32, num_classes * 4, (kernel_size, kernel_size))
+        self.gcm2 = _GlobalConvModule(256, num_classes * dap_k ** 2, (kernel_size, kernel_size))
+        self.gcm3 = _GlobalConvModule(128, num_classes * dap_k ** 2, (kernel_size, kernel_size))
+        self.gcm4 = _GlobalConvModule(64, num_classes * dap_k ** 2, (kernel_size, kernel_size))
+        self.gcm5 = _GlobalConvModule(64, num_classes * dap_k ** 2, (kernel_size, kernel_size))
 
         self.deconv1 = nn.ConvTranspose2d(num_classes * 4, num_classes * dap_k ** 2, kernel_size=3,
                                           stride=2, padding=1, bias=False)
-        self.deconv2 = nn.ConvTranspose2d(num_classes * dap_k ** 2, num_classes * dap_k ** 2, kernel_size=4,
+        self.deconv2 = nn.ConvTranspose2d(2 * num_classes * dap_k ** 2, num_classes * dap_k ** 2, kernel_size=4,
                                           stride=2, padding=1, bias=False)
-        self.deconv3 = nn.ConvTranspose2d(num_classes * dap_k ** 2, num_classes * dap_k ** 2, kernel_size=4,
+        self.deconv3 = nn.ConvTranspose2d(2 * num_classes * dap_k ** 2, num_classes * dap_k ** 2, kernel_size=4,
                                           stride=2, padding=1, bias=False)
-        self.deconv4 = nn.ConvTranspose2d(num_classes * dap_k ** 2, num_classes * dap_k ** 2, kernel_size=4,
+        self.deconv4 = nn.ConvTranspose2d(2 * num_classes * dap_k ** 2, num_classes * dap_k ** 2, kernel_size=4,
                                           stride=2, padding=1, bias=False)
-        self.deconv5 = nn.ConvTranspose2d(num_classes * dap_k ** 2, num_classes * dap_k ** 2, kernel_size=4,
+        self.deconv5 = nn.ConvTranspose2d(2 * num_classes * dap_k ** 2, num_classes * dap_k ** 2, kernel_size=4,
                                           stride=2, padding=1, bias=False)
 
         self.DAP = nn.Sequential(
@@ -165,13 +175,31 @@ class SegmentHead(nn.Module):
             nn.AvgPool2d((dap_k, dap_k))
         )
 
-    def forward(self, x):  # (32, 4, 4)
+    def forward(self, x, x_feats):  # (32, 4, 4)
+        assert len(x_feats) == 4
+        """
+        x0: 64, 56, 56
+        x1: 64, 28, 28
+        x2: 128, 14, 14
+        x3: 256, 7, 7
+        """
+        x0, x1, x2, x3 = x_feats[0], x_feats[1], x_feats[2], x_feats[3]
+
         x = self.gcm1(x)  # (8, 4, 4)
         x = self.deconv1(x)  # (2*9, 7, 7)
-        x = self.deconv2(x)  # (2*9, 14, 14)
-        x = self.deconv3(x)
-        x = self.deconv4(x)
-        x = self.deconv5(x)
+
+        x3 = self.gcm2(x3)
+        x = self.deconv2(torch.cat((x, x3), 1))  # (2*9, 14, 14)
+
+        x2 = self.gcm3(x2)
+        x = self.deconv3(torch.cat((x, x2), 1))
+
+        x1 = self.gcm4(x1)
+        x = self.deconv4(torch.cat((x, x1), 1))
+
+        x0 = self.gcm5(x0)
+        x = self.deconv5(torch.cat((x, x0), 1))
+
         x = self.DAP(x)
         return x  # (2, 112, 112)
 
@@ -298,7 +326,7 @@ class SegTransformer(nn.Module):
         super().__init__()
         self.fp16 = fp16
 
-        self.extractor_oc = IResBackbone(IBasicBlock, cnn_layers)
+        self.extractor_oc = IResBackboneSeg(IBasicBlock, cnn_layers, conv1_stride=2)
 
         pattern_dim = 256
         self.to_patch_embedding_oc = nn.Sequential(
@@ -313,16 +341,6 @@ class SegTransformer(nn.Module):
         self.dropout = nn.Dropout(emb_dropout)
 
         self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim, dropout)
-
-        self.id_to_out = nn.Sequential(
-            nn.LayerNorm(dim, eps=1e-05),
-            nn.BatchNorm1d(dim, eps=1e-05),
-            # nn.Linear(dim, dim)
-        )
-        self.fc = nn.Linear(dim, dim)
-        self.features = nn.BatchNorm1d(dim, eps=1e-05)
-        nn.init.constant_(self.features.weight, 1.0)
-        # self.features.weight.requires_grad = False
 
         self.oc_to_4d = nn.Sequential(
             nn.LayerNorm(dim),
@@ -346,7 +364,8 @@ class SegTransformer(nn.Module):
     def forward(self, x, label=None):
         with torch.cuda.amp.autocast(self.fp16):
             # CNN
-            pat_oc = self.extractor_oc(x)
+            x_feats = self.extractor_oc(x)
+            pat_oc = x_feats[-1]
             emb_oc = self.to_patch_embedding_oc(pat_oc)
             b, n, _ = emb_oc.shape
 
@@ -365,7 +384,7 @@ class SegTransformer(nn.Module):
             out_oc = self.oc_to_4d(emb_oc)
 
         out_oc = out_oc.float() if self.fp16 else out_oc
-        out_oc = self.oc_head(out_oc)
+        out_oc = self.oc_head(out_oc, x_feats)
 
         return out_oc
 

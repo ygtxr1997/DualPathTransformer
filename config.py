@@ -31,10 +31,24 @@ st_set.depth = 1
 st_set.heads = 4
 st_set.dim_head = 32
 st_set.mlp_dim = 128
-st_set.emb_dropout = 0.
-st_set.dropout = 0.
+st_set.emb_dropout = 0.2
+st_set.dropout = 0.2
 
-cfg.model_set = st_set
+""" Setting for Model DualPathTransformer"""
+dp_set = edict()
+dp_set.dim = 512
+dp_set.depth = 1
+dp_set.heads_id = 8
+dp_set.heads_oc = 4
+dp_set.dim_head_id = 64
+dp_set.dim_head_oc = 32
+dp_set.mlp_dim_id = 512
+dp_set.mlp_dim_oc = 128
+dp_set.emb_dropout = 0.
+dp_set.dropout_id = 0.
+dp_set.dropout_oc = 0.2
+
+cfg.model_set = dp_set
 print(cfg.model_set)
 
 if cfg.dataset == "emore":

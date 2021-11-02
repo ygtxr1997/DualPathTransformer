@@ -9,11 +9,15 @@ img = torch.randn(1, 3, 112, 112)
 from backbone.dual_path_transformer import DualPathTransformer
 dpt = DualPathTransformer(cnn_layers=[2, 2, 2],
                           dim=512,
-                          depth=2,
-                          heads=8,
-                          mlp_dim=512,
+                          depth=1,
+                          heads_id=8,
+                          heads_oc=4,
+                          mlp_dim_id=512,
+                          mlp_dim_oc=128,
                           num_classes=93431,
-                          dim_head=64,
+                          dim_head_id=64,
+                          dim_head_oc=32,
+                          dropout_oc=0.2,
                           fp16=False).cuda()
 # feature_id, feature_oc = dpt(img.cuda())
 # print(feature_id.shape, feature_oc.shape)
@@ -64,7 +68,7 @@ st = SegTransformer(cnn_layers=[2, 2, 2],
 """ =================== flops&params ====================== """
 import backbone
 
-model = ft
+model = dpt
 macs, params = profile(model,
                        inputs=(img.cuda(), ),
                        custom_ops={
@@ -72,10 +76,14 @@ macs, params = profile(model,
                            backbone.face_transformer.FeedForward: backbone.face_transformer.FeedForward.cnt_flops,
                            backbone.seg_transformer.Attention: backbone.seg_transformer.Attention.cnt_flops,
                            backbone.seg_transformer.FeedForward: backbone.seg_transformer.FeedForward.cnt_flops,
+                           backbone.dual_path_transformer.Attention: backbone.dual_path_transformer.Attention.cnt_flops,
+                           backbone.dual_path_transformer.FeedForward: backbone.dual_path_transformer.FeedForward.cnt_flops,
+                           backbone.dual_path_transformer.CrossAttention: backbone.dual_path_transformer.CrossAttention.cnt_flops,
+
                        },)
 from thop import clever_format
 macs, params = clever_format([macs, params], "%.2f")
-print(macs, params)
+print('MACs:', macs, 'wrong:', params)
 
 params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 print('%.2fM' % (params / 1e6))

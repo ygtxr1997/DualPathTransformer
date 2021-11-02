@@ -72,7 +72,7 @@ def main(args):
     #     local_rank=local_rank)
     train_sampler = torch.utils.data.distributed.DistributedSampler(
         trainset, shuffle=True)
-    nw = 6
+    nw = 1
     train_loader = DataLoaderX(
         local_rank=local_rank, dataset=trainset, batch_size=cfg.batch_size,
         sampler=train_sampler, num_workers=nw, pin_memory=True, drop_last=True)
@@ -83,11 +83,15 @@ def main(args):
                                                         num_classes=cfg.num_classes,
                                                         dim=cfg.model_set.dim,
                                                         depth=cfg.model_set.depth,
-                                                        heads=cfg.model_set.heads,
-                                                        mlp_dim=cfg.model_set.mlp_dim,
+                                                        heads_id=cfg.model_set.heads_id,
+                                                        heads_oc=cfg.model_set.heads_oc,
+                                                        mlp_dim_id=cfg.model_set.mlp_dim_id,
+                                                        mlp_dim_oc=cfg.model_set.mlp_dim_oc,
                                                         emb_dropout=cfg.model_set.emb_dropout,
-                                                        dim_head=cfg.model_set.dim_head,
-                                                        dropout=cfg.model_set.dropout
+                                                        dim_head_id=cfg.model_set.dim_head_id,
+                                                        dim_head_oc=cfg.model_set.dim_head_oc,
+                                                        dropout_id=cfg.model_set.dropout_id,
+                                                        dropout_oc=cfg.model_set.dropout_oc
                                                         ).to(local_rank)
 
     if args.resume:
@@ -174,20 +178,20 @@ def main(args):
 
             """ op1: full classes """
             with amp.autocast(cfg.fp16):
-                # [f_id, msk_final] = backbone(img)
-                final_id = backbone(img, label)
+                [final_id, msk_final] = backbone(img, label)
+                # final_id = backbone(img, label)
                 # f_id = F.normalize(f_id)  # TODO: close normalize
 
                 """ 1. occ """
-                # with torch.no_grad():
-                #     msk_cc_var = Variable(msk.clone().cuda(non_blocking=True))
-                # seg_loss = seg_criterion(msk_final, msk_cc_var, msk)
-                seg_loss = 0.
+                with torch.no_grad():
+                    msk_cc_var = Variable(msk.clone().cuda(non_blocking=True))
+                seg_loss = seg_criterion(msk_final, msk_cc_var, msk)
+                # seg_loss = 0.
 
                 """ 2. id """
                 cls_loss = cls_criterion(final_id, label)
 
-                l1 = 3
+                l1 = 1
                 total_loss = cls_loss + l1 * seg_loss
 
             if cfg.fp16:
@@ -266,7 +270,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='PyTorch DualPathTransformer Training')
     parser.add_argument('--local_rank', type=int, default=0, help='local_rank')
-    parser.add_argument('--network', type=str, default='dpt_r18s3_ca3', help='backbone network')
+    parser.add_argument('--network', type=str, default='dpt_r18s3_ca1', help='backbone network')
     parser.add_argument('--loss', type=str, default='ArcFace', help='loss function')
     parser.add_argument('--resume', type=int, default=0, help='model resuming')
     args_ = parser.parse_args()
