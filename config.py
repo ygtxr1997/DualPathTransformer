@@ -10,7 +10,7 @@ cfg.weight_decay = 5e-4
 cfg.batch_size = 128  # 128
 cfg.lr = 2e-4  # 0.1 for batch size is 512
 
-cfg.exp_id = 23
+cfg.exp_id = 24
 cfg.output = "tmp_" + str(cfg.exp_id)
 print('output path: ', cfg.output)
 
@@ -24,7 +24,18 @@ ft_set.mlp_dim = 512
 ft_set.emb_dropout = 0.
 ft_set.dropout = 0.
 
-cfg.model_set = ft_set
+""" Setting for Model SegTransformer """
+st_set = edict()
+st_set.dim = 512
+st_set.depth = 1
+st_set.heads = 4
+st_set.dim_head = 32
+st_set.mlp_dim = 128
+st_set.emb_dropout = 0.
+st_set.dropout = 0.
+
+cfg.model_set = st_set
+print(cfg.model_set)
 
 if cfg.dataset == "emore":
     cfg.rec = "/train_tmp/faces_emore"
@@ -47,7 +58,7 @@ elif cfg.dataset == "ms1m-retinaface-t2":
     cfg.num_classes = 93431 # 91180
     cfg.num_epoch = 25
     cfg.warmup_epoch = -10 # -1
-    cfg.val_targets = ["lfw", "cfp_fp", ]  # ["lfw", "cfp_fp", "agedb_30"]
+    cfg.val_targets = [] #["lfw", "cfp_fp", ]  # ["lfw", "cfp_fp", "agedb_30"]
 
     def lr_step_func(epoch):
         return ((epoch + 1) / (4 + 1)) ** 2 if epoch < cfg.warmup_epoch else 0.1 ** len(
