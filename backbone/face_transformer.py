@@ -319,15 +319,17 @@ class FaceTransformer(nn.Module):
             nn.BatchNorm1d(dim, eps=1e-05),
             # nn.Linear(dim, dim)
         )
-        self.fc = nn.Linear(dim, dim)
-        self.features = nn.BatchNorm1d(dim, eps=1e-05)
+
+        feature_dim = 512
+        self.fc = nn.Linear(dim, feature_dim)  # TODO: fix feature size to 512
+        self.features = nn.BatchNorm1d(feature_dim, eps=1e-05)
         nn.init.constant_(self.features.weight, 1.0)
         # self.features.weight.requires_grad = False
 
         # self.id_head = nn.Linear(dim, num_classes)
 
         from tricks.margin_losses import CosFace, Softmax, ArcFace
-        self.loss = CosFace(in_features=dim, out_features=num_classes, device_id=None,
+        self.loss = CosFace(in_features=feature_dim, out_features=num_classes, device_id=None,
                             m=0.35, s=64.0)
         # self.loss = Softmax(in_features=dim, out_features=num_classes, device_id=None,)
 

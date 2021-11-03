@@ -19,7 +19,7 @@ from utils.utils_callbacks import CallBackVerification, CallBackLogging, CallBac
 from utils.utils_logging import AverageMeter, init_logging
 from utils.utils_amp import MaxClipGradScaler
 
-from dataset.dataset_aug import FaceRandOccMask, Msk2Tenser
+from dataset.dataset_aug import FaceRandOccMask, Msk2Tenser, FaceRandOccMaskFaster
 import torchvision.transforms as transforms
 from torch.autograd import Variable
 from thop import profile
@@ -72,27 +72,41 @@ def main(args):
     #     local_rank=local_rank)
     train_sampler = torch.utils.data.distributed.DistributedSampler(
         trainset, shuffle=True)
-    nw = 20
+    nw = cfg.nw
+    print('====> num_workers:', nw)
     train_loader = DataLoaderX(
         local_rank=local_rank, dataset=trainset, batch_size=cfg.batch_size,
         sampler=train_sampler, num_workers=nw, pin_memory=True, drop_last=True)
 
     dropout = 0.4 if cfg.dataset is "webface" else 0
-    backbone = eval("backbone.{}".format(args.network))(False,
-                                                        fp16=cfg.fp16,
-                                                        num_classes=cfg.num_classes,
-                                                        dim=cfg.model_set.dim,
-                                                        depth=cfg.model_set.depth,
-                                                        heads_id=cfg.model_set.heads_id,
-                                                        heads_oc=cfg.model_set.heads_oc,
-                                                        mlp_dim_id=cfg.model_set.mlp_dim_id,
-                                                        mlp_dim_oc=cfg.model_set.mlp_dim_oc,
-                                                        emb_dropout=cfg.model_set.emb_dropout,
-                                                        dim_head_id=cfg.model_set.dim_head_id,
-                                                        dim_head_oc=cfg.model_set.dim_head_oc,
-                                                        dropout_id=cfg.model_set.dropout_id,
-                                                        dropout_oc=cfg.model_set.dropout_oc
-                                                        ).to(local_rank)
+    if args.network[:3] == 'dpt':
+        backbone = eval("backbone.{}".format(args.network))(False,
+                                                            fp16=cfg.fp16,
+                                                            num_classes=cfg.num_classes,
+                                                            dim=cfg.model_set.dim,
+                                                            depth=cfg.model_set.depth,
+                                                            heads_id=cfg.model_set.heads_id,
+                                                            heads_oc=cfg.model_set.heads_oc,
+                                                            mlp_dim_id=cfg.model_set.mlp_dim_id,
+                                                            mlp_dim_oc=cfg.model_set.mlp_dim_oc,
+                                                            emb_dropout=cfg.model_set.emb_dropout,
+                                                            dim_head_id=cfg.model_set.dim_head_id,
+                                                            dim_head_oc=cfg.model_set.dim_head_oc,
+                                                            dropout_id=cfg.model_set.dropout_id,
+                                                            dropout_oc=cfg.model_set.dropout_oc
+                                                            ).to(local_rank)
+    elif args.network[:2] == 'ft':
+        backbone = eval("backbone.{}".format(args.network))(False,
+                                                            fp16=cfg.fp16,
+                                                            num_classes=cfg.num_classes,
+                                                            dim=cfg.model_set.dim,
+                                                            depth=cfg.model_set.depth,
+                                                            heads=cfg.model_set.heads,
+                                                            mlp_dim=cfg.model_set.mlp_dim,
+                                                            emb_dropout=cfg.model_set.emb_dropout,
+                                                            dim_head=cfg.model_set.dim_head,
+                                                            dropout=cfg.model_set.dropout,
+                                                            ).to(local_rank)
 
     if args.resume:
         try:
@@ -182,17 +196,15 @@ def main(args):
 
             """ op1: full classes """
             with amp.autocast(cfg.fp16):
-                [final_id, msk_final] = backbone(img, label)
-                # final_id = backbone(img, label)
-                # f_id = F.normalize(f_id)  # TODO: close normalize
+                if args.network[:3] == 'dpt':
+                    [final_id, msk_final] = backbone(img, label)
+                    with torch.no_grad():
+                        msk_cc_var = Variable(msk.clone().cuda(non_blocking=True))
+                    seg_loss = seg_criterion(msk_final, msk_cc_var, msk)
+                elif args.network[:2] == 'ft':
+                    final_id = backbone(img, label)
+                    seg_loss = 0.
 
-                """ 1. occ """
-                with torch.no_grad():
-                    msk_cc_var = Variable(msk.clone().cuda(non_blocking=True))
-                seg_loss = seg_criterion(msk_final, msk_cc_var, msk)
-                # seg_loss = 0.
-
-                """ 2. id """
                 cls_loss = cls_criterion(final_id, label)
 
                 l1 = 1

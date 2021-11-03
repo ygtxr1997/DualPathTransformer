@@ -595,7 +595,10 @@ class DualPathTransformer(nn.Module):
 
         # Occ-Head & Id-Head
         out_oc = out_oc.float() if self.fp16 else out_oc
-        out_oc = self.oc_head(out_oc, x_feats)
+        x_float_feats = []
+        for x_feat in x_feats:
+            x_float_feats.append(x_feat.float() if self.fp16 else x_feat)
+        out_oc = self.oc_head(out_oc, x_float_feats)
 
         emb_id = emb_id.float() if self.fp16 else emb_id
         emb_id = self.fc(emb_id)

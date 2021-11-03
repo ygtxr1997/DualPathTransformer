@@ -26,12 +26,12 @@ dpt = DualPathTransformer(cnn_layers=[2, 2, 2],
 from backbone.face_transformer import FaceTransformer
 ft = FaceTransformer(cnn_layers=[2, 2, 2],
                      num_classes=93431,
-                     dim=512,
-                     depth=4,
-                     heads=8,
-                     mlp_dim=512,
+                     dim=cfg.ft_set.dim,
+                     depth=cfg.ft_set.depth,
+                     heads=cfg.ft_set.heads,
+                     mlp_dim=cfg.ft_set.mlp_dim,
                      emb_dropout=0.,
-                     dim_head=64,
+                     dim_head=cfg.ft_set.dim_head,
                      dropout=0.,
                      fp16=False).cuda()
 # feature_id = ft(img.cuda())
@@ -68,7 +68,7 @@ st = SegTransformer(cnn_layers=[2, 2, 2],
 """ =================== flops&params ====================== """
 import backbone
 
-model = dpt
+model = ft
 macs, params = profile(model,
                        inputs=(img.cuda(), ),
                        custom_ops={

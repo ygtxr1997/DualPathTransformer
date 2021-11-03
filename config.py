@@ -9,6 +9,7 @@ cfg.momentum = 0.9
 cfg.weight_decay = 5e-4
 cfg.batch_size = 128  # 128
 cfg.lr = 2e-4  # 0.1 for batch size is 512
+cfg.nw = 20
 
 cfg.exp_id = 25
 cfg.output = "tmp_" + str(cfg.exp_id)
@@ -16,13 +17,13 @@ print('output path: ', cfg.output)
 
 """ Setting for Model FaceTransformer """
 ft_set = edict()
-ft_set.dim = 512
+ft_set.dim = 128
 ft_set.depth = 1
-ft_set.heads = 8
+ft_set.heads = 4
 ft_set.dim_head = 64
-ft_set.mlp_dim = 512
-ft_set.emb_dropout = 0.
-ft_set.dropout = 0.
+ft_set.mlp_dim = 128
+ft_set.emb_dropout = 0.2
+ft_set.dropout = 0.2
 
 """ Setting for Model SegTransformer """
 st_set = edict()
@@ -69,10 +70,14 @@ elif cfg.dataset == "ms1m-retinaface-t2":
     import os
     if os.path.exists("/GPUFS/sysu_zhenghch_1/yuange/SelfServer/DeepInsight/insightface/datasets/ms1m-retinaface"):
         cfg.rec = "/GPUFS/sysu_zhenghch_1/yuange/SelfServer/DeepInsight/insightface/datasets/ms1m-retinaface"
-    cfg.num_classes = 93431 # 91180
+        cfg.nw = 20
+    elif os.path.exists("/tmp/train_tmp"):
+        cfg.rec = "/tmp/train_tmp/ms1m-retinaface"  # mount on RAM
+        cfg.nw = 0
+    cfg.num_classes = 93431  # 91180
     cfg.num_epoch = 25
-    cfg.warmup_epoch = -10 # -1
-    cfg.val_targets = [] #["lfw", "cfp_fp", ]  # ["lfw", "cfp_fp", "agedb_30"]
+    cfg.warmup_epoch = -10  # -1
+    cfg.val_targets = ["lfw", "cfp_fp", ]  # ["lfw", "cfp_fp", "agedb_30"]
 
     def lr_step_func(epoch):
         return ((epoch + 1) / (4 + 1)) ** 2 if epoch < cfg.warmup_epoch else 0.1 ** len(
