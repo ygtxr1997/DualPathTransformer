@@ -107,7 +107,7 @@ class FaceRandOccMask(data.Dataset):
 
             img = Image.fromarray(img)
 
-            msk = Image.fromarray(np.ones((out_size, out_size), dtype=np.uint8) * 255)
+            # msk = Image.fromarray(np.ones((out_size, out_size), dtype=np.uint8) * 255)
 
             random_trans = self.trans_occ[random.randint(0, 6)]
             img, msk = random_trans(img)
@@ -147,7 +147,10 @@ class FaceRandOccMask(data.Dataset):
             img_trans = self.img_tf(img_trans)
 
             # 5.1 Add Light to Masked Image
-            light = self._get_Gauss(0, 0, out_size, out_size, center_x=[1, 56, 111], center_y=[1, 56, 111], R=224)
+            light = self._get_Gauss(0, 0, out_size, out_size,
+                                    center_x=np.array([1, 56, 111]),
+                                    center_y=np.array([1, 56, 111]),
+                                    R=224)
             scale = random.uniform(0.7, 1.4)
             light = light.astype(np.float32) * scale
             img_trans = img_trans * light
@@ -181,7 +184,8 @@ class FaceRandOccMask(data.Dataset):
                 trans_type = random.randint(0, 10)
                 if trans_type >= 7:
                     Gauss_map = self._get_Gauss(left_top_x, left_top_y, right_down_x, right_down_y,
-                                                center_x=[1, 56, 111], center_y=[1, 56, 111])
+                                                center_x=np.array([1, 56, 111]),
+                                                center_y=np.array([1, 56, 111]))
                     Gauss_map = (Gauss_map - 0.5) * 2 * 0.4 * (random.randint(0, 1) * 2 - 1)
 
                     rescale_map[left_top_x:right_down_x,
@@ -234,9 +238,9 @@ class FaceRandOccMask(data.Dataset):
     def _get_Gauss(self, left_top_x, left_top_y, right_down_x, right_down_y, center_x=None, center_y=None, R=-1):
 
         if center_x is None:
-            center_x = []
+            center_x = np.zeros(3)
         if center_y is None:
-            center_y = []
+            center_y = np.zeros(3)
 
         IMAGE_HEIGHT = right_down_y - left_top_y
         IMAGE_WIDTH = right_down_x - left_top_x
@@ -273,6 +277,6 @@ class Msk2Tenser(object):
         msk = np.array(msk, dtype=np.int32)
         msk[msk != 255] = 0
         msk[msk == 255] = 1
-        msk = torch.from_numpy(msk).long()
+        msk = torch.from_numpy(msk).int()
 
         return msk

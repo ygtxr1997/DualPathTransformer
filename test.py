@@ -8,15 +8,15 @@ img = torch.randn(1, 3, 112, 112)
 """ 1. Dual-Path Transformer """
 from backbone.dual_path_transformer import DualPathTransformer
 dpt = DualPathTransformer(cnn_layers=[2, 2, 2],
-                          dim=512,
-                          depth=1,
-                          heads_id=8,
-                          heads_oc=4,
-                          mlp_dim_id=512,
-                          mlp_dim_oc=128,
+                          dim=cfg.dp_set.dim,
+                          depth=cfg.dp_set.depth,
+                          heads_id=cfg.dp_set.heads_id,
+                          heads_oc=cfg.dp_set.heads_oc,
+                          mlp_dim_id=cfg.dp_set.mlp_dim_id,
+                          mlp_dim_oc=cfg.dp_set.mlp_dim_oc,
                           num_classes=93431,
-                          dim_head_id=64,
-                          dim_head_oc=32,
+                          dim_head_id=cfg.dp_set.dim_head_id,
+                          dim_head_oc=cfg.dp_set.dim_head_oc,
                           dropout_oc=0.2,
                           fp16=False).cuda()
 # feature_id, feature_oc = dpt(img.cuda())

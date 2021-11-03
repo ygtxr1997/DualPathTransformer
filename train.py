@@ -72,7 +72,7 @@ def main(args):
     #     local_rank=local_rank)
     train_sampler = torch.utils.data.distributed.DistributedSampler(
         trainset, shuffle=True)
-    nw = 1
+    nw = 20
     train_loader = DataLoaderX(
         local_rank=local_rank, dataset=trainset, batch_size=cfg.batch_size,
         sampler=train_sampler, num_workers=nw, pin_memory=True, drop_last=True)
@@ -170,6 +170,10 @@ def main(args):
 
     for epoch in range(start_epoch, cfg.num_epoch):
         train_sampler.set_epoch(epoch)
+        if epoch < args.resume:
+            print('=====> skip epoch %d' % (epoch))
+            scheduler_backbone.step()
+            continue
         for step, (img, msk, label) in enumerate(train_loader):
         # for step, (img, label) in enumerate(train_loader):
             global_step += 1

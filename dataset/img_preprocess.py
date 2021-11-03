@@ -85,7 +85,8 @@ class RandomRecOcc(object):
         return img, msk
 
     def _RecOcc(self, img, size):
-        img_occ = copy.deepcopy(img)
+        # img_occ = copy.deepcopy(img)
+        img_occ = img
 
         block_size = int(size * size * self.ratio)
 
