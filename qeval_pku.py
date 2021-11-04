@@ -201,6 +201,25 @@ class ExtractFeature(object):
                                                         dropout=cfg.model_set.dropout
                                                         ).cuda()
             model.load_state_dict(weight)
+        elif self.model_name == 'dpt_r18':
+            self.weight_path = './tmp_24/backbone.pth'
+            weight = torch.load(self.weight_path)
+            model = eval("backbone.{}".format('dpt_r18s3_ca1'))(False,
+                                                        fp16=cfg.fp16,
+                                                        num_classes=cfg.num_classes,
+                                                        dim=cfg.model_set.dim,
+                                                        depth=cfg.model_set.depth,
+                                                        heads_id=cfg.model_set.heads_id,
+                                                        heads_oc=cfg.model_set.heads_oc,
+                                                        mlp_dim_id=cfg.model_set.mlp_dim_id,
+                                                        mlp_dim_oc=cfg.model_set.mlp_dim_oc,
+                                                        emb_dropout=cfg.model_set.emb_dropout,
+                                                        dim_head_id=cfg.model_set.dim_head_id,
+                                                        dim_head_oc=cfg.model_set.dim_head_oc,
+                                                        dropout_id=cfg.model_set.dropout_id,
+                                                        dropout_oc=cfg.model_set.dropout_oc
+                                                        ).cuda()
+            model.load_state_dict(weight)
         else:
             print('Error model type\n')
 
@@ -478,7 +497,7 @@ if __name__ == '__main__':
     task_type = 'pku_ver'
     my_task = TASKS[task_type]
 
-    my_task['model_name'] = 'ft_r18'
+    my_task['model_name'] = 'arcface_r34'
     my_task['task_name'] = my_task['task_name']
     print('[model_name]: ', my_task['model_name'])
     print('[transform]: ', my_task['transform'])

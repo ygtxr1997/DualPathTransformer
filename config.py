@@ -11,14 +11,14 @@ cfg.batch_size = 128  # 128
 cfg.lr = 2e-4  # 0.1 for batch size is 512
 cfg.nw = 20
 
-cfg.exp_id = 24
+cfg.exp_id = 27112
 cfg.output = "tmp_" + str(cfg.exp_id)
 print('output path: ', cfg.output)
 
 """ Setting for Model FaceTransformer """
 ft_set = edict()
 ft_set.dim = 128
-ft_set.depth = 1
+ft_set.depth = 2
 ft_set.heads = 4
 ft_set.dim_head = 64
 ft_set.mlp_dim = 128
@@ -45,11 +45,11 @@ dp_set.dim_head_id = 64
 dp_set.dim_head_oc = 32
 dp_set.mlp_dim_id = 512
 dp_set.mlp_dim_oc = 128
-dp_set.emb_dropout = 0.
-dp_set.dropout_id = 0.
-dp_set.dropout_oc = 0.2
+dp_set.emb_dropout = 0.2
+dp_set.dropout_id = 0.2
+dp_set.dropout_oc = 0.3
 
-cfg.model_set = ft_set
+cfg.model_set = dp_set
 print(cfg.model_set)
 
 if cfg.dataset == "emore":

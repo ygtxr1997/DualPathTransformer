@@ -531,15 +531,17 @@ class DualPathTransformer(nn.Module):
             nn.LayerNorm(dim, eps=1e-05),
             nn.BatchNorm1d(dim, eps=1e-05),
         )
-        self.fc = nn.Linear(dim, dim)
-        self.features = nn.BatchNorm1d(dim, eps=1e-05)
+        feature_dim = 512
+        self.fc = nn.Linear(dim, feature_dim)
+        self.features = nn.BatchNorm1d(feature_dim, eps=1e-05)
         nn.init.constant_(self.features.weight, 1.0)
         from tricks.margin_losses import CosFace, Softmax, ArcFace
-        self.loss = CosFace(in_features=dim, out_features=num_classes, device_id=None,
+        self.loss = CosFace(in_features=feature_dim, out_features=num_classes, device_id=None,
                             m=0.35, s=64.0)
 
         self.oc_to_4d = nn.Sequential(
-            nn.LayerNorm(dim),
+            # nn.Linear(dim, feature_dim),
+            nn.LayerNorm(feature_dim),
             Rearrange('b (c h w) -> b c h w', c=32, h=4),
         )
         self.oc_head = SegmentHead(num_classes=2, kernel_size=7, dap_k=3)

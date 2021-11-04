@@ -24,7 +24,7 @@ dpt = DualPathTransformer(cnn_layers=[2, 2, 2],
 
 """ 2. Face Transformer """
 from backbone.face_transformer import FaceTransformer
-ft = FaceTransformer(cnn_layers=[2, 2, 2],
+ft = FaceTransformer(cnn_layers=[3, 4, 3],
                      num_classes=93431,
                      dim=cfg.ft_set.dim,
                      depth=cfg.ft_set.depth,
