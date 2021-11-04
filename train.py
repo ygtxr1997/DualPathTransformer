@@ -121,7 +121,7 @@ def main(args):
         dist.broadcast(ps, 0)
     backbone = torch.nn.parallel.DistributedDataParallel(
         module=backbone, broadcast_buffers=False, device_ids=[local_rank],
-        find_unused_parameters=True)
+        find_unused_parameters=False)
     backbone.train()
 
     margin_softmax = eval("losses.{}".format(args.loss))()
