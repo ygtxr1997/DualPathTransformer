@@ -4,7 +4,7 @@ from torch import nn
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 
-__all__ = ['dpt_r18s3_ca1']
+__all__ = ['dpt_r18s3_ca1', 'dpt_r34s3_ca1', 'dpt_r50s3_ca1']
 
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
     """3x3 convolution with padding"""
@@ -540,7 +540,7 @@ class DualPathTransformer(nn.Module):
                             m=0.35, s=64.0)
 
         self.oc_to_4d = nn.Sequential(
-            # nn.Linear(dim, feature_dim),
+            nn.Linear(dim, feature_dim),
             nn.LayerNorm(feature_dim),
             Rearrange('b (c h w) -> b c h w', c=32, h=4),
         )
@@ -637,3 +637,11 @@ def _dpt(arch, layers, **kwargs):
 
 def dpt_r18s3_ca1(pretrained=False, **kwargs):
     return _dpt('dpt-tiny', [2, 2, 2], **kwargs)
+
+
+def dpt_r34s3_ca1(pretrained=False, **kwargs):
+    return _dpt('dpt-tiny', [3, 4, 3], **kwargs)
+
+
+def dpt_r50s3_ca1(pretrained=False, **kwargs):
+    return _dpt('dpt-tiny', [3, 4, 3], **kwargs)

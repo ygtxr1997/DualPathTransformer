@@ -62,7 +62,7 @@ class FaceRandOccMask(data.Dataset):
         s = self.imgrec.read_idx(0)
         header, _ = mx.recordio.unpack(s)
         if header.flag > 0:
-            self.header0 = (int(header.label[0]), int(header.label[1]))
+            self.header0 = np.array((int(header.label[0]), int(header.label[1])))
             self.imgidx = np.array(range(1, int(header.label[0])))  # mask_out.rec starts from index 1
         else:
             self.imgidx = np.array(list(self.imgrec.keys))

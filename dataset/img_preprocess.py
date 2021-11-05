@@ -131,7 +131,7 @@ class RandomConnectedPolygon(object):
 
         polygon = self._get_polygon(height, width)
 
-        color_list = [0, 0, 0]
+        color_list = np.array([0, 0, 0])
         for c in range(channel):
             color_list[c] = random.randint(1, 255) if self.rand_gray_val else 255
         face_arr[polygon != 0] = color_list if channel == 3 else color_list[0]
@@ -150,10 +150,11 @@ class RandomConnectedPolygon(object):
         0: no occlusion \n
         1~255: occluded by random gray value \n
         """
-        start_time = time.time()
+        # start_time = time.time()
         polygon = np.zeros([height, width], dtype=np.uint8)
 
-        points = []
+        point_cnt = (random.randint(4, 10))
+        points = np.zeros((point_cnt, 2))
 
         center_x = random.randint(height // 5, 4 * height // 5)
         center_y = random.randint(width // 5, 4 * width // 5)
@@ -163,16 +164,15 @@ class RandomConnectedPolygon(object):
         big_angle, small_angle = 0, 0  # [0, 2pi]
 
         # First point
-        points.append(self._calc_from_circle(big_radius, big_angle, center_x, center_y))
+        points[0] = self._calc_from_circle(big_radius, big_angle, center_x, center_y)
 
-        point_cnt = (random.randint(4, 10))
-        for ind in range(point_cnt):
+        for ind in range(1, point_cnt):
             big_angle += 2 * math.pi / point_cnt * random.uniform(0.7, 1.3)
-            points.append(self._calc_from_circle(big_radius, big_angle, center_x, center_y))
+            points[ind] = self._calc_from_circle(big_radius, big_angle, center_x, center_y)
 
             if random.random() > 0.5:
                 small_angle += 2 * math.pi / point_cnt * random.uniform(0.6, 1.4)
-                points.append(self._calc_from_circle(small_radius, small_angle, center_x, center_y))
+                points[ind] = self._calc_from_circle(small_radius, small_angle, center_x, center_y)
 
         gray_val = random.randint(1, 255) if self.rand_gray_val else 255
 
@@ -184,7 +184,7 @@ class RandomConnectedPolygon(object):
     def _calc_from_circle(self, radius, angle, center_x, center_y):
         target_x = center_x + radius * math.cos(angle)
         target_y = center_y + radius * math.sin(angle)
-        return [int(target_x), int(target_y)]
+        return np.array([int(target_x), int(target_y)])
 
 
 class RandomConnectedOval(object):
@@ -207,7 +207,7 @@ class RandomConnectedOval(object):
 
         oval = self._get_oval(height, width)
 
-        color_list = [0, 0, 0]
+        color_list = np.array([0, 0, 0])
         for c in range(channel):
             color_list[c] = random.randint(1, 255) if self.rand_gray_val else 255
         face_arr[oval != 0] = color_list if channel == 3 else color_list[0]

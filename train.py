@@ -121,7 +121,7 @@ def main(args):
         dist.broadcast(ps, 0)
     backbone = torch.nn.parallel.DistributedDataParallel(
         module=backbone, broadcast_buffers=False, device_ids=[local_rank],
-        find_unused_parameters=False)
+        find_unused_parameters=True)
     backbone.train()
 
     margin_softmax = eval("losses.{}".format(args.loss))()
@@ -197,7 +197,7 @@ def main(args):
             """ op1: full classes """
             with amp.autocast(cfg.fp16):
                 if args.network[:3] == 'dpt':
-                    [final_id, msk_final] = backbone(img, label)
+                    final_id, msk_final = backbone(img, label)
                     with torch.no_grad():
                         msk_cc_var = Variable(msk.clone().cuda(non_blocking=True))
                     seg_loss = seg_criterion(msk_final, msk_cc_var, msk)
