@@ -501,7 +501,7 @@ class DualPathTransformer(nn.Module):
         self.fp16 = fp16
 
         self.extractor_id = IResBackbone(IBasicBlock, cnn_layers)
-        self.extractor_oc = IResBackboneSeg(IBasicBlock, cnn_layers, conv1_stride=2)
+        self.extractor_oc = IResBackboneSeg(IBasicBlock, [2, 2, 2], conv1_stride=2)
 
         pattern_dim = 256
         self.to_patch_embedding_id = nn.Sequential(

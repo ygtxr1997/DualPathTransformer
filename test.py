@@ -7,7 +7,7 @@ img = torch.randn(1, 3, 112, 112)
 
 """ 1. Dual-Path Transformer """
 from backbone.dual_path_transformer import DualPathTransformer
-dpt = DualPathTransformer(cnn_layers=[2, 2, 2],
+dpt = DualPathTransformer(cnn_layers=[3, 4, 3],
                           dim=cfg.dp_set.dim,
                           depth=cfg.dp_set.depth,
                           heads_id=cfg.dp_set.heads_id,
@@ -68,7 +68,7 @@ st = SegTransformer(cnn_layers=[2, 2, 2],
 """ =================== flops&params ====================== """
 import backbone
 
-model = ft
+model = dpt
 macs, params = profile(model,
                        inputs=(img.cuda(), ),
                        custom_ops={
