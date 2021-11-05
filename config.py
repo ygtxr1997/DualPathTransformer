@@ -11,6 +11,7 @@ cfg.batch_size = 128  # 128
 cfg.lr = 2e-4  # 0.1 for batch size is 512
 cfg.nw = 20
 
+""" Setting EXP ID """
 cfg.exp_id = 27112
 cfg.output = "tmp_" + str(cfg.exp_id)
 print('output path: ', cfg.output)
@@ -45,11 +46,11 @@ dp_set.dim_head_id = 64
 dp_set.dim_head_oc = 32
 dp_set.mlp_dim_id = 512
 dp_set.mlp_dim_oc = 128
-dp_set.emb_dropout = 0.2
-dp_set.dropout_id = 0.2
-dp_set.dropout_oc = 0.3
+dp_set.emb_dropout = 0.
+dp_set.dropout_id = 0.
+dp_set.dropout_oc = 0.2
 
-cfg.model_set = dp_set
+cfg.model_set = ft_set
 print(cfg.model_set)
 
 if cfg.dataset == "emore":
@@ -70,14 +71,14 @@ elif cfg.dataset == "ms1m-retinaface-t2":
     import os
     if os.path.exists("/GPUFS/sysu_zhenghch_1/yuange/SelfServer/DeepInsight/insightface/datasets/ms1m-retinaface"):
         cfg.rec = "/GPUFS/sysu_zhenghch_1/yuange/SelfServer/DeepInsight/insightface/datasets/ms1m-retinaface"
-        cfg.nw = 20
+        cfg.nw = 14
     elif os.path.exists("/tmp/train_tmp"):
         cfg.rec = "/tmp/train_tmp/ms1m-retinaface"  # mount on RAM
         cfg.nw = 0
     cfg.num_classes = 93431  # 91180
     cfg.num_epoch = 25
     cfg.warmup_epoch = -10  # -1
-    cfg.val_targets = ["lfw", "cfp_fp", ]  # ["lfw", "cfp_fp", "agedb_30"]
+    cfg.val_targets = [] #["lfw", "cfp_fp", ]  # ["lfw", "cfp_fp", "agedb_30"]
 
     def lr_step_func(epoch):
         return ((epoch + 1) / (4 + 1)) ** 2 if epoch < cfg.warmup_epoch else 0.1 ** len(

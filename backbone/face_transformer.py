@@ -4,7 +4,7 @@ from torch import nn
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 
-__all__ = ['ft_r18']
+__all__ = ['ft_r18', 'ft_r34', 'ft_r50']
 
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
     """3x3 convolution with padding"""
@@ -406,3 +406,11 @@ def _dpt(arch, layers, **kwargs):
 
 def ft_r18(pretrained=False, **kwargs):
     return _dpt('dpt-tiny', [2, 2, 2], **kwargs)
+
+
+def ft_r34(pretrained=False, **kwargs):
+    return _dpt('dpt-small', [3, 4, 3], **kwargs)
+
+
+def ft_r50(pretrained=False, **kwargs):
+    return _dpt('dpt-big', [3, 4, 3], **kwargs)
