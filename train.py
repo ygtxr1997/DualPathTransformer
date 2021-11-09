@@ -207,7 +207,7 @@ def main(args):
 
                 cls_loss = cls_criterion(final_id, label)
 
-                l1 = 1
+                l1 = cfg.l1
                 total_loss = cls_loss + l1 * seg_loss
 
             if cfg.fp16:

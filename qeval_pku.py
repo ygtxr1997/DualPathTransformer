@@ -33,10 +33,11 @@ from dataset.img_preprocess_no_msk import Randomblock, RandomConnectedPolygon, R
 
 from config import cfg
 
+divisor = 1
 TASKS = {
     'pku_ver': {
         'img_root': '/home/yuange/dataset/PKU-Masked-Face',
-        'list_file': 'ver.list',
+        'list_file': 'ver24000.list',
         'save_path': './features',
         'task_name': 'pku_ver_extract.npy',
         'model_name': 'arcface_r18',
@@ -46,8 +47,8 @@ TASKS = {
                                          # Randombaboon(),
                                          # Randomblock(),
                                          transforms.ToTensor()]),
-        'ground_truth_label': list(np.zeros([3000 * 4], dtype=np.int))
-                              + list(np.ones([3000 * 4], dtype=np.int)),
+        'ground_truth_label': list(np.zeros([3000 * 4 // divisor], dtype=np.int))
+                              + list(np.ones([3000 * 4 // divisor], dtype=np.int)),
     },
 }
 
@@ -69,35 +70,35 @@ class ExtractFeature(object):
     def _load_model(self):
         if self.model_name == 'arcface_r18':
             # self.weight_path = '/home/yuange/code/SelfServer/ArcFace/r18-backbone.pth'
-            self.weight_path = '/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/cosface_sub1.3_0.1_r18_angle/backbone.pth'
+            self.weight_path = '/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r18_occ6/backbone.pth'
             # self.weight_path = '/GPUFS/sysu_zhenghch_1/yuange/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r18_osb18_mlm4/backbone.pth'
             weight = torch.load(self.weight_path)
-            model = eval("backbones.{}".format('iresnet18'))(False).cuda()
+            model = eval("backbone.{}".format('iresnet18'))(False).cuda()
             model.load_state_dict(weight)
         elif self.model_name == 'arcface_r34':
             # self.weight_path = '/home/yuange/code/SelfServer/ArcFace/r34-backbone.pth'
-            self.weight_path = '/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r34_occ6/backbone.pth'
+            self.weight_path = './ms1mv3_arcface_r34_occ6/backbone.pth'
             weight = torch.load(self.weight_path)
-            model = eval("backbones.{}".format('iresnet34'))(False).cuda()
+            model = eval("backbone.{}".format('iresnet34'))(False).cuda()
             model.load_state_dict(weight)
         elif self.model_name == 'arcface_r50':
             # self.weight_path = '/home/yuange/code/SelfServer/ArcFace/r50-backbone.pth'
             self.weight_path = 'ms1mv3_arcface_r50_occ6/backbone.pth'
             weight = torch.load(self.weight_path)
-            model = eval("backbones.{}".format('iresnet50'))(False).cuda()
+            model = eval("backbone.{}".format('iresnet50'))(False).cuda()
             model.load_state_dict(weight)
         elif self.model_name == 'arcface_r100':
             # self.weight_path = '/home/yuange/code/SelfServer/ArcFace/r100-backbone.pth'
-            self.weight_path = '/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r100_onlysmooth/backbone.pth'
-            # self.weight_path = 'ms1mv3_arcface_r100_occ6/backbone.pth'
+            # self.weight_path = '/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r100_onlysmooth/backbone.pth'
+            self.weight_path = 'ms1mv3_arcface_r100_mg/backbone.pth'
             # weight = torch.load('/GPUFS/sysu_zhenghch_1/yuange/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r100_bot50_lr3/backbone.pth')
             weight = torch.load(self.weight_path)
-            model = eval("backbones.{}".format('iresnet100'))(False).cuda()
+            model = eval("backbone.{}".format('iresnet100'))(False).cuda()
             model.load_state_dict(weight)
         elif self.model_name == 'arcface_r152':
             # weight = torch.load('/home/yuange/code/SelfServer/ArcFace/r152-backbone.pth')
             weight = torch.load('/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r152_mg/backbone.pth')
-            model = eval("backbones.{}".format('iresnet152'))(False).cuda()
+            model = eval("backbone.{}".format('iresnet152'))(False).cuda()
             model.load_state_dict(weight)
         elif self.model_name == 'arcface_r100_osb_r50':
             weight = torch.load('/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r100_osb_r50/backbone.pth')
@@ -176,7 +177,7 @@ class ExtractFeature(object):
             model.load_state_dict(weight)
         elif self.model_name == 'arcface_r50_res':
             weight = torch.load('/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/resnet50/backbone.pth')
-            model = eval("backbones.{}".format('resnet50'))(False).cuda()
+            model = eval("backbone.{}".format('resnet50'))(False).cuda()
             model.load_state_dict(weight)
         elif self.model_name == 'arcface_r100_osb_r18':
             self.weight_path = '/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r100_osb_r18_aaai/backbone.pth'
@@ -187,9 +188,9 @@ class ExtractFeature(object):
                                                        osb='r18').cuda()
             model.load_state_dict(weight)
         elif self.model_name == 'ft_r18':
-            self.weight_path = './tmp_21/backbone.pth'
+            self.weight_path = './tmp_35106/backbone.pth'
             weight = torch.load(self.weight_path)
-            model = eval("backbone.{}".format('ft_r18'))(False,
+            model = eval("backbone.{}".format('ft_r34'))(False,
                                                         fp16=cfg.fp16,
                                                         num_classes=cfg.num_classes,
                                                         dim=cfg.model_set.dim,
@@ -202,7 +203,7 @@ class ExtractFeature(object):
                                                         ).cuda()
             model.load_state_dict(weight)
         elif self.model_name == 'dpt_r18':
-            self.weight_path = './tmp_24/backbone.pth'
+            self.weight_path = './tmp_30122/backbone.pth'
             weight = torch.load(self.weight_path)
             model = eval("backbone.{}".format('dpt_r18s3_ca1'))(False,
                                                         fp16=cfg.fp16,
@@ -497,7 +498,7 @@ if __name__ == '__main__':
     task_type = 'pku_ver'
     my_task = TASKS[task_type]
 
-    my_task['model_name'] = 'arcface_r34'
+    my_task['model_name'] = 'ft_r18'
     my_task['task_name'] = my_task['task_name']
     print('[model_name]: ', my_task['model_name'])
     print('[transform]: ', my_task['transform'])
@@ -509,8 +510,8 @@ if __name__ == '__main__':
         img_root = '/GPUFS/sysu_zhenghch_1/yuange/datasets/' + img_root[len('/home/yuange/dataset/'):]
 
     all_img = []
-    pku_root = '/home/yuange/dataset/PKU-Masked-Face'
-    pku_list_file = 'ver.list'
+    pku_root = img_root
+    pku_list_file = 'ver24000.list'
     with open(os.path.join(pku_root, pku_list_file), 'r') as list_f:
         pku_list = list_f.readlines()
     pku_num = len(pku_list)
@@ -529,7 +530,7 @@ if __name__ == '__main__':
         # one_img = pku_trans(one_img)
         # one_img.save(img_path[:-3] + 'jpg')
 
-        if index < 6000 * 4:
+        if index < 6000 * 4 // divisor:
             pku_pos.append(one_img)
         else:
             pku_neg.append(one_img)
@@ -537,7 +538,7 @@ if __name__ == '__main__':
     flag = False
     pos_cnt, neg_cnt = 0, 0
     for i in range(num):
-        if i % (600 * 4) == 0:
+        if i % (600 * 4 // divisor) == 0:
             flag = ~flag
         if flag:
             all_img.append(pku_pos[pos_cnt])
@@ -566,15 +567,15 @@ if __name__ == '__main__':
         my_task['save_path'] = 'features/'
 
         flag = bool(False)
-        period = 300 * 4
+        period = 300 * 4 // divisor
         issame_list = []
-        for i in range(6000 * 4):
+        for i in range(6000 * 4 // divisor):
             if i % period == 0:
                 flag = ~flag
             issame_list.append(bool(flag))
         flag = 1
         intsame_list = []
-        for i in range(6000 * 4):
+        for i in range(6000 * 4 // divisor):
             if i % period == 0:
                 flag = 1 - flag
             intsame_list.append(flag)
