@@ -65,6 +65,19 @@ st = SegTransformer(cnn_layers=[2, 2, 2],
                      dropout=0.,
                      fp16=False).cuda()
 
+""" 5. DPT only SA """
+from backbone.dual_path_transformer_only_sa import DualPathTransformerSA
+dptsa = DualPathTransformerSA(cnn_layers=[3, 4, 3],
+                    num_classes=93431,
+                    dim=cfg.dptsa_set.dim,
+                    depth=cfg.dptsa_set.depth,
+                    heads=cfg.dptsa_set.heads,
+                    mlp_dim=cfg.dptsa_set.mlp_dim,
+                    emb_dropout=0.,
+                    dim_head=cfg.dptsa_set.dim_head,
+                    dropout=0.,
+                    fp16=False).cuda()
+
 """ =================== flops&params ====================== """
 import backbone
 
@@ -79,7 +92,10 @@ macs, params = profile(model,
                            backbone.dual_path_transformer.Attention: backbone.dual_path_transformer.Attention.cnt_flops,
                            backbone.dual_path_transformer.FeedForward: backbone.dual_path_transformer.FeedForward.cnt_flops,
                            backbone.dual_path_transformer.CrossAttention: backbone.dual_path_transformer.CrossAttention.cnt_flops,
-
+                           backbone.dual_path_transformer_only_sa.Attention: \
+                                backbone.dual_path_transformer_only_sa.Attention.cnt_flops,
+                           backbone.dual_path_transformer_only_sa.FeedForward: \
+                                backbone.dual_path_transformer_only_sa.FeedForward.cnt_flops,
                        },)
 from thop import clever_format
 macs, params = clever_format([macs, params], "%.2f")

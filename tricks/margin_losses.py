@@ -194,3 +194,86 @@ class CosFace(nn.Module):
                + ', out_features = ' + str(self.out_features) \
                + ', s = ' + str(self.s) \
                + ', m = ' + str(self.m) + ')'
+
+
+class AMCosFace(nn.Module):
+    r"""Implement of CosFace (https://arxiv.org/pdf/1801.09414.pdf):
+    Args:
+        in_features: size of each input sample
+        out_features: size of each output sample
+        device_id: the ID of GPU where the model will be trained by model parallel.
+                       if device_id=None, it will be trained on CPU without model parallel.
+        s: norm of input feature
+        m: margin
+        cos(theta)-m
+    """
+
+    def __init__(self, in_features, out_features, device_id, s=64.0, m=0.4,
+                 a=1.2, k=0.1,):
+        super(AMCosFace, self).__init__()
+        print('AMCosFace, s=%.1f, m=%.2f, a=%.2f, k=%.2f' % (s, m, a, k))
+        self.in_features = in_features
+        self.out_features = out_features
+        self.device_id = device_id
+        self.s = s
+        self.m = m
+        self.a = a
+        self.k = k
+        self.weight = Parameter(torch.FloatTensor(out_features, in_features))
+        nn.init.xavier_uniform_(self.weight)
+
+    def forward(self, input, label):
+        # --------------------------- cos(theta) & phi(theta) ---------------------------
+
+        if self.device_id == None:
+            cosine = F.linear(F.normalize(input), F.normalize(self.weight))
+        else:
+            raise ValueError
+            x = input
+            sub_weights = torch.chunk(self.weight, len(self.device_id), dim=0)
+            temp_x = x.cuda(self.device_id[0])
+            weight = sub_weights[0].cuda(self.device_id[0])
+            cosine = F.linear(F.normalize(temp_x), F.normalize(weight))
+            for i in range(1, len(self.device_id)):
+                temp_x = x.cuda(self.device_id[i])
+                weight = sub_weights[i].cuda(self.device_id[i])
+                cosine = torch.cat((cosine, F.linear(F.normalize(temp_x), F.normalize(weight)).cuda(self.device_id[0])),
+                                   dim=1)
+
+        index = torch.where(label != -1)[0]
+        m_hot = torch.zeros(index.size()[0], cosine.size()[1], device=cosine.device)
+        m_hot.scatter_(1, label[index, None], self.m)
+
+        a = self.a
+        k = self.k
+        m_hot[range(0, index.size()[0]), label[index]] -= k * (cosine[index, label[index]].acos_() - a)
+        cosine[index] -= m_hot
+
+        output = cosine * self.s
+
+        return output
+
+    def __repr__(self):
+        return self.__class__.__name__ + '(' \
+               + 'in_features = ' + str(self.in_features) \
+               + ', out_features = ' + str(self.out_features) \
+               + ', s = ' + str(self.s) \
+               + ', m = ' + str(self.m) + ')'
+
+
+if __name__ == '__main__':
+    cosine = torch.randn(6, 8) / 100
+    cosine[0][2] = 0.3
+    cosine[1][4] = 0.4
+    cosine[2][6] = 0.5
+    cosine[3][5] = 0.6
+    cosine[4][3] = 0.7
+    cosine[5][0] = 0.8
+    label = torch.tensor([-1, 4, -1, 5, 3, -1])
+
+    layer = AMCosFace(in_features=8,
+                      out_features=8,
+                      device_id=None,
+                      m=0.35, s=1.0,
+                      a=1.2, k=0.1)
+    print('after forward:', layer(torch.ones((6, 8)), label))

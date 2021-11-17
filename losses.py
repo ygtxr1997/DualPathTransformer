@@ -49,13 +49,13 @@ class CosFace(nn.Module):
         # cosine[index] -= m_hot
 
         """ 3. adaptive - subtract linear """
-        # a = self.a
-        # k = self.k
-        # m_hot[range(0, index.size()[0]), label[index]] -= k * (cosine[index, label[index]].acos_() - a)
-        # cosine[index] -= m_hot
+        a = self.a
+        k = self.k
+        m_hot[range(0, index.size()[0]), label[index]] -= k * (cosine[index, label[index]].acos_() - a)
+        cosine[index] -= m_hot
 
-        # ret = cosine * self.s
-        ret = cosine * 1
+        ret = cosine * self.s
+        # ret = cosine * 1
         return ret
 
 
@@ -64,6 +64,9 @@ class ArcFace(nn.Module):
         super(ArcFace, self).__init__()
         self.s = s
         self.m = m
+
+        self.a = 1.2  # 1.2
+        self.k = 0.1  # 0.1
 
         self.avg_min = 0
         self.avg_max = 0
@@ -80,20 +83,27 @@ class ArcFace(nn.Module):
         m_hot.scatter_(1, label[index, None], self.m)
         cosine.acos_()
 
-        import os
-        rank = int(os.environ['RANK'])
-        self.cnt += 1
-        self.avg_min += cosine[index, label[index]].min().data.cpu()
-        self.avg_max += cosine[index, label[index]].max().data.cpu()
-        self.avg_avg += cosine[index, label[index]].mean().data.cpu()
-        if self.cnt % 100 == 0 and rank == 0:
-            import logging
-            logging.info('before:[%d],mean:[%.4f],range:[%.4f~%.4f]', self.cnt,
-                         self.avg_avg / self.cnt,
-                         self.avg_min / self.cnt,
-                         self.avg_max / self.cnt)
+        # import os
+        # rank = int(os.environ['RANK'])
+        # self.cnt += 1
+        # self.avg_min += cosine[index, label[index]].min().data.cpu()
+        # self.avg_max += cosine[index, label[index]].max().data.cpu()
+        # self.avg_avg += cosine[index, label[index]].mean().data.cpu()
+        # if self.cnt % 100 == 0 and rank == 0:
+        #     import logging
+        #     logging.info('before:[%d],mean:[%.4f],range:[%.4f~%.4f]', self.cnt,
+        #                  self.avg_avg / self.cnt,
+        #                  self.avg_min / self.cnt,
+        #                  self.avg_max / self.cnt)
 
-        cosine[index] += m_hot
+        """ 1. arcface """
+        # cosine[index] += m_hot
+
+        """ 2. lm arcface """
+        cosine[index, label[index]] = cosine[index, label[index]] + self.m
+        cosine[index, label[index]] = cosine[index, label[index]] - \
+                                      self.k * (cosine[index, label[index]] - self.a)
+
         cosine.cos_().mul_(self.s)
         # print('after:', cosine.min(), cosine.max())
         return cosine

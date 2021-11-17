@@ -78,9 +78,6 @@ def main(args):
         local_rank=local_rank, dataset=trainset, batch_size=cfg.batch_size,
         sampler=train_sampler, num_workers=nw, pin_memory=True, drop_last=True)
 
-    from tricks.automatic_weighted_loss import AutomaticWeightedLoss
-    awl = AutomaticWeightedLoss(2).cuda()
-
     dropout = 0.4 if cfg.dataset is "webface" else 0
     if args.network[:3] == 'dpt':
         backbone = eval("backbone.{}".format(args.network))(False,
@@ -88,15 +85,11 @@ def main(args):
                                                             num_classes=cfg.num_classes,
                                                             dim=cfg.model_set.dim,
                                                             depth=cfg.model_set.depth,
-                                                            heads_id=cfg.model_set.heads_id,
-                                                            heads_oc=cfg.model_set.heads_oc,
-                                                            mlp_dim_id=cfg.model_set.mlp_dim_id,
-                                                            mlp_dim_oc=cfg.model_set.mlp_dim_oc,
+                                                            heads=cfg.model_set.heads,
+                                                            mlp_dim=cfg.model_set.mlp_dim,
                                                             emb_dropout=cfg.model_set.emb_dropout,
-                                                            dim_head_id=cfg.model_set.dim_head_id,
-                                                            dim_head_oc=cfg.model_set.dim_head_oc,
-                                                            dropout_id=cfg.model_set.dropout_id,
-                                                            dropout_oc=cfg.model_set.dropout_oc
+                                                            dim_head=cfg.model_set.dim_head,
+                                                            dropout=cfg.model_set.dropout,
                                                             ).to(local_rank)
     elif args.network[:2] == 'ft':
         backbone = eval("backbone.{}".format(args.network))(False,
@@ -119,9 +112,6 @@ def main(args):
                 logging.info("backbone resume successfully!")
         except (FileNotFoundError, KeyError, IndexError, RuntimeError):
             logging.info("resume fail, backbone init successfully!")
-        awl_pth = os.path.join(cfg.output, "awloss.pth")
-        if os.path.exists(awl_pth):
-            awl.load_state_dict(torch.load(awl_pth, map_location=torch.device(local_rank)))
 
     for ps in backbone.parameters():
         dist.broadcast(ps, 0)
@@ -136,17 +126,20 @@ def main(args):
         batch_size=cfg.batch_size, margin_softmax=margin_softmax, num_classes=cfg.num_classes,
         sample_rate=cfg.sample_rate, embedding_size=cfg.embedding_size, prefix=cfg.output)
 
-    for ps in awl.parameters():
-        dist.broadcast(ps, 0)
-    awl.train()
-
     # opt_backbone = torch.optim.SGD(
     #     params=[{'params': backbone.parameters()}],
     #     lr=cfg.lr / 512 * cfg.batch_size * world_size,
     #     momentum=0.9, weight_decay=cfg.weight_decay)
+    # opt_backbone = torch.optim.Adam(
+    #     params=[{'params': backbone.parameters()}],
+    #     lr=cfg.lr / 512 * cfg.batch_size * world_size,
+    #     betas=(0.9, 0.999),
+    #     eps=1e-08,
+    #     weight_decay=0.04,
+    #     amsgrad=False
+    # )
     opt_backbone = torch.optim.AdamW(
-        params=[{'params': backbone.parameters()},
-                {'params': awl.parameters(), 'weight_decay': 0}],
+        params=[{'params': backbone.parameters()}],
         lr=cfg.lr / 512 * cfg.batch_size * world_size,
         betas=(0.9, 0.999),
         eps=1e-08,
@@ -172,7 +165,6 @@ def main(args):
     callback_checkpoint = CallBackModelCheckpoint(rank, cfg.output)
 
     loss = AverageMeter()
-    loss_1 = AverageMeter()
     global_step = 0
     grad_scaler = MaxClipGradScaler(init_scale=cfg.batch_size,  # cfg.batch_size
                                     max_scale=128 * cfg.batch_size,
@@ -199,6 +191,7 @@ def main(args):
             #     print('rank:', rank, time.strftime("[%Y-%m-%d-%H_%M_%S]", time.localtime()), global_step)
 
             """ op1: full classes """
+            # msk = 1 - msk  # TODO: reverted mask label?
             with amp.autocast(cfg.fp16):
                 if args.network[:3] == 'dpt':
                     final_id, msk_final = backbone(img, label)
@@ -212,8 +205,7 @@ def main(args):
                 cls_loss = cls_criterion(final_id, label)
 
                 l1 = cfg.l1
-                # total_loss = cls_loss + l1 * seg_loss
-                total_loss = awl(cls_loss, seg_loss, rank=rank)
+                total_loss = cls_loss + l1 * seg_loss
 
             if cfg.fp16:
                 grad_scaler.scale(total_loss).backward()
@@ -268,11 +260,10 @@ def main(args):
             # l1 = 0.
             """ end - partial fc"""
 
-            loss_1.update(cls_loss, 1)
             if global_step % 100 == 0 and rank == 0:
-                logging.info('[exp_%d], seg_loss=%.4f, cls_loss=%.4f, scale=%.4f, lr=%.4f, l1=%.4f, '
+                print('[exp_%d], seg_loss=%.4f, cls_loss=%.4f, scale=%.4f, lr=%.4f, l1=%.4f, '
                       'num_workers=%d'
-                      % (cfg.exp_id, seg_loss, loss_1.avg, scaler.get_scale(), cfg.lr, l1, nw))
+                      % (cfg.exp_id, seg_loss, cls_loss, scaler.get_scale(), cfg.lr, l1, nw))
 
             loss.update(loss_v, 1)
             callback_logging(global_step, loss, epoch, cfg.fp16, grad_scaler)
@@ -283,7 +274,7 @@ def main(args):
                     lr = param_group['lr']
                 print(lr)
 
-        callback_checkpoint(global_step, backbone, module_partial_fc, awloss=awl)
+        callback_checkpoint(global_step, backbone, module_partial_fc)
         scheduler_backbone.step()
         # scheduler_pfc.step()
     dist.destroy_process_group()
@@ -292,7 +283,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='PyTorch DualPathTransformer Training')
     parser.add_argument('--local_rank', type=int, default=0, help='local_rank')
-    parser.add_argument('--network', type=str, default='dpt_r18s3_ca1', help='backbone network')
+    parser.add_argument('--network', type=str, default='dpt_only_sa_r18', help='backbone network')
     parser.add_argument('--loss', type=str, default='ArcFace', help='loss function')
     parser.add_argument('--resume', type=int, default=0, help='model resuming')
     args_ = parser.parse_args()

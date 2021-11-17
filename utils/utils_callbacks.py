@@ -101,9 +101,12 @@ class CallBackModelCheckpoint(object):
         self.rank: int = rank
         self.output: str = output
 
-    def __call__(self, global_step, backbone: torch.nn.Module, partial_fc: PartialFC = None):
+    def __call__(self, global_step, backbone: torch.nn.Module, partial_fc: PartialFC = None,
+                 awloss=None,):
         print('hello')
         if global_step > 100 and self.rank is 0:
             torch.save(backbone.module.state_dict(), os.path.join(self.output, "backbone.pth"))
         if global_step > 100 and partial_fc is not None:
             partial_fc.save_params()
+        if global_step > 100 and awloss is not None:
+            torch.save(awloss.state_dict(), os.path.join(self.output, "awloss.pth"))

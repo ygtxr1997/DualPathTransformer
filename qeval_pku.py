@@ -70,8 +70,9 @@ class ExtractFeature(object):
     def _load_model(self):
         if self.model_name == 'arcface_r18':
             # self.weight_path = '/home/yuange/code/SelfServer/ArcFace/r18-backbone.pth'
-            self.weight_path = '/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r18_occ6/backbone.pth'
-            # self.weight_path = '/GPUFS/sysu_zhenghch_1/yuange/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r18_osb18_mlm4/backbone.pth'
+            # self.weight_path = '/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r18_occ6/backbone.pth'
+            self.weight_path = '/GPUFS/sysu_zhenghch_1/yuange/SelfServer/DeepInsight/insightface/recognition/arcface_torch/arcface_r18/backbone.pth'
+            # self.weight_path = './tmp_47018/backbone.pth'
             weight = torch.load(self.weight_path)
             model = eval("backbone.{}".format('iresnet18'))(False).cuda()
             model.load_state_dict(weight)
@@ -188,9 +189,9 @@ class ExtractFeature(object):
                                                        osb='r18').cuda()
             model.load_state_dict(weight)
         elif self.model_name == 'ft_r18':
-            self.weight_path = './tmp_35106/backbone.pth'
+            self.weight_path = './tmp_33102/backbone.pth'
             weight = torch.load(self.weight_path)
-            model = eval("backbone.{}".format('ft_r34'))(False,
+            model = eval("backbone.{}".format('ft_r18'))(False,
                                                         fp16=cfg.fp16,
                                                         num_classes=cfg.num_classes,
                                                         dim=cfg.model_set.dim,
@@ -203,9 +204,9 @@ class ExtractFeature(object):
                                                         ).cuda()
             model.load_state_dict(weight)
         elif self.model_name == 'dpt_r18':
-            self.weight_path = './tmp_30122/backbone.pth'
+            self.weight_path = './tmp_0/backbone.pth'
             weight = torch.load(self.weight_path)
-            model = eval("backbone.{}".format('dpt_r18s3_ca1'))(False,
+            model = eval("backbone.{}".format('dpt_r34s3_ca1'))(False,
                                                         fp16=cfg.fp16,
                                                         num_classes=cfg.num_classes,
                                                         dim=cfg.model_set.dim,
@@ -219,6 +220,21 @@ class ExtractFeature(object):
                                                         dim_head_oc=cfg.model_set.dim_head_oc,
                                                         dropout_id=cfg.model_set.dropout_id,
                                                         dropout_oc=cfg.model_set.dropout_oc
+                                                        ).cuda()
+            model.load_state_dict(weight)
+        elif self.model_name == 'dptsa_r18':
+            self.weight_path = './tmp_42124/backbone.pth'
+            weight = torch.load(self.weight_path)
+            model = eval("backbone.{}".format('dpt_only_sa_r34'))(False,
+                                                          fp16=cfg.fp16,
+                                                          num_classes=cfg.num_classes,
+                                                          dim=cfg.model_set.dim,
+                                                          depth=cfg.model_set.depth,
+                                                          heads=cfg.model_set.heads,
+                                                          mlp_dim=cfg.model_set.mlp_dim,
+                                                          emb_dropout=cfg.model_set.emb_dropout,
+                                                          dim_head=cfg.model_set.dim_head,
+                                                          dropout=cfg.model_set.dropout,
                                                         ).cuda()
             model.load_state_dict(weight)
         else:
@@ -392,6 +408,26 @@ class ExtractFeature(object):
             if i == -1:
                 self._visualize_attn(mask, identity, patch_input)
 
+        """ Visualize Predicted Masks """
+        #     if i <= 400:
+        #         # some_tensor.max(0)[0]: value of max_value
+        #         # some_tensor.max(0)[1]: index of max_value
+        #         mask = mask[0].cpu().max(0)[1].data.numpy() * 255
+        #         mask = mask.astype(np.uint8)
+        #
+        #         mask = Image.fromarray(mask.astype(np.uint8))
+        #         mask.save(os.path.join(self.save_path, 'pku' + str(i) + '_learned.jpg'))
+        #
+        #         img = np.zeros((112, 112, 3))
+        #         img[:, :, 0] = (patch_input[0][0].cpu().data.numpy() + 1.0) * 127.5
+        #         img[:, :, 1] = (patch_input[0][1].cpu().data.numpy() + 1.0) * 127.5
+        #         img[:, :, 2] = (patch_input[0][2].cpu().data.numpy() + 1.0) * 127.5
+        #
+        #         img = Image.fromarray(img.astype(np.uint8), mode='RGB')
+        #         img.save(os.path.join(self.save_path, 'pku' + str(i) + '_truth.jpg'))
+        #
+        # raise FileNotFoundError
+
         for i in range(total_step):
             patch_input = all_flip_var[i * batch_size: (i + 1) * batch_size]
             # feature, mask, identity = model(patch_input)
@@ -490,15 +526,20 @@ class Verification(object):
 
 if __name__ == '__main__':
 
+    parser = argparse.ArgumentParser(description='PyTorch DualPathTransformer Training')
+    parser.add_argument('--network', type=str, default='dpt_r18', help='backbone network')
+    parser.add_argument('--dataset', type=str, default='pku_ver', help='pku_ver')
+    args = parser.parse_args()
+
     random.seed(4)
     np.random.seed(1)
     torch.manual_seed(1)
     torch.cuda.manual_seed_all(1)
 
-    task_type = 'pku_ver'
+    task_type = args.dataset
     my_task = TASKS[task_type]
 
-    my_task['model_name'] = 'ft_r18'
+    my_task['model_name'] = args.network
     my_task['task_name'] = my_task['task_name']
     print('[model_name]: ', my_task['model_name'])
     print('[transform]: ', my_task['transform'])
@@ -511,7 +552,7 @@ if __name__ == '__main__':
 
     all_img = []
     pku_root = img_root
-    pku_list_file = 'ver24000.list'
+    pku_list_file = my_task['list_file']
     with open(os.path.join(pku_root, pku_list_file), 'r') as list_f:
         pku_list = list_f.readlines()
     pku_num = len(pku_list)

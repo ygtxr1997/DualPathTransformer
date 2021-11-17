@@ -11,20 +11,27 @@ cfg.batch_size = 128  # 128
 cfg.lr = 2e-4  # 0.1 for batch size is 512
 
 cfg.nw = 20
-cfg.l1 = 0.1
+cfg.l1 = 1
+
+"""
+0: Softmax; 1: ArcFace; 2: CosFace; 3: AMArcFace; 4: AMCosFace
+"""
+cfg.loss_type = 2
+cfg.am_a = 1.2
+cfg.am_k = 0.1
 
 """ Setting EXP ID """
-cfg.exp_id = 36122
+cfg.exp_id = 48126
 cfg.output = "tmp_" + str(cfg.exp_id)
 print('output path: ', cfg.output)
 
 """ Setting for Model FaceTransformer """
 ft_set = edict()
-ft_set.dim = 384
+ft_set.dim = 512
 ft_set.depth = 2
 ft_set.heads = 8
 ft_set.dim_head = 64
-ft_set.mlp_dim = 256
+ft_set.mlp_dim = 128
 ft_set.emb_dropout = 0.1
 ft_set.dropout = 0.1
 
@@ -40,17 +47,27 @@ st_set.dropout = 0.2
 
 """ Setting for Model DualPathTransformer"""
 dp_set = edict()
-dp_set.dim = 128
-dp_set.depth = 1
-dp_set.heads_id = 4
-dp_set.heads_oc = 4
+dp_set.dim = 384
+dp_set.depth = 2
+dp_set.heads_id = 6
+dp_set.heads_oc = 6
 dp_set.dim_head_id = 64
 dp_set.dim_head_oc = 64
-dp_set.mlp_dim_id = 128
-dp_set.mlp_dim_oc = 128
+dp_set.mlp_dim_id = 192
+dp_set.mlp_dim_oc = 192
 dp_set.emb_dropout = 0.1
 dp_set.dropout_id = 0.1
-dp_set.dropout_oc = 0.2
+dp_set.dropout_oc = 0.1
+
+""" Setting for Model DPT Only SA """
+dptsa_set = edict()
+dptsa_set.dim = 256
+dptsa_set.depth = 1
+dptsa_set.heads = 12
+dptsa_set.dim_head = 64
+dptsa_set.mlp_dim = 384
+dptsa_set.emb_dropout = 0.1
+dptsa_set.dropout = 0.1
 
 cfg.model_set = dp_set
 print(cfg.model_set)
@@ -80,7 +97,7 @@ elif cfg.dataset == "ms1m-retinaface-t2":
     cfg.num_classes = 93431  # 91180
     cfg.num_epoch = 25
     cfg.warmup_epoch = -10  # -1
-    cfg.val_targets = [] #["lfw", "cfp_fp", ]  # ["lfw", "cfp_fp", "agedb_30"]
+    cfg.val_targets = ["lfw", "cfp_fp", ]  # ["lfw", "cfp_fp", "agedb_30"]
 
     def lr_step_func(epoch):
         return ((epoch + 1) / (4 + 1)) ** 2 if epoch < cfg.warmup_epoch else 0.1 ** len(
