@@ -87,6 +87,7 @@ class ArcFace(nn.Module):
 
         self.s = s
         self.m = m
+        print('ArcFace, s=%.1f, m=%.2f' % (s, m))
 
         self.weight = Parameter(torch.FloatTensor(out_features, in_features))
         nn.init.xavier_uniform_(self.weight)

@@ -212,8 +212,8 @@ def main(args):
                 cls_loss = cls_criterion(final_id, label)
 
                 l1 = cfg.l1
-                # total_loss = cls_loss + l1 * seg_loss
-                total_loss = awl(cls_loss, seg_loss, rank=rank)
+                total_loss = cls_loss + l1 * seg_loss
+                # total_loss = awl(cls_loss, seg_loss, rank=rank)
 
             if cfg.fp16:
                 grad_scaler.scale(total_loss).backward()
