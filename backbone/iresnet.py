@@ -218,7 +218,7 @@ class IResNetFc(nn.Module):
         # self.loss = CosFace(in_features=num_features, out_features=num_classes, device_id=None,
         #                     m=0.35, s=64.0)
         self.loss = ArcFace(in_features=num_features, out_features=num_classes, device_id=None,
-                            m=0.35, s=64.0)
+                            m=0.5, s=64.0)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):

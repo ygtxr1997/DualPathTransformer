@@ -19,7 +19,7 @@ from utils.utils_callbacks import CallBackVerification, CallBackLogging, CallBac
 from utils.utils_logging import AverageMeter, init_logging
 from utils.utils_amp import MaxClipGradScaler
 
-from dataset.dataset_aug import FaceRandOccMask, Msk2Tenser, FaceRandOccMaskFaster
+from dataset.dataset_aug import FaceRandOccMask, Msk2Tenser
 import torchvision.transforms as transforms
 from torch.autograd import Variable
 from thop import profile
@@ -140,19 +140,20 @@ def main(args):
         dist.broadcast(ps, 0)
     awl.train()
 
-    # opt_backbone = torch.optim.SGD(
-    #     params=[{'params': backbone.parameters()}],
-    #     lr=cfg.lr / 512 * cfg.batch_size * world_size,
-    #     momentum=0.9, weight_decay=cfg.weight_decay)
-    opt_backbone = torch.optim.AdamW(
-        params=[{'params': backbone.parameters()},
-                {'params': awl.parameters(), 'weight_decay': 0}],
+    cfg.lr = 0.02
+    opt_backbone = torch.optim.SGD(
+        params=[{'params': backbone.parameters()}],
         lr=cfg.lr / 512 * cfg.batch_size * world_size,
-        betas=(0.9, 0.999),
-        eps=1e-08,
-        weight_decay=0.04,
-        amsgrad=False
-    )
+        momentum=0.9, weight_decay=cfg.weight_decay)
+    # opt_backbone = torch.optim.AdamW(
+    #     params=[{'params': backbone.parameters()},
+    #             {'params': awl.parameters(), 'weight_decay': 0}],
+    #     lr=cfg.lr / 512 * cfg.batch_size * world_size,
+    #     betas=(0.9, 0.999),
+    #     eps=1e-08,
+    #     weight_decay=0.04,
+    #     amsgrad=False
+    # )
     opt_pfc = torch.optim.SGD(
         params=[{'params': module_partial_fc.parameters()}],
         lr=cfg.lr / 512 * cfg.batch_size * world_size,

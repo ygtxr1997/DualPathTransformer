@@ -132,6 +132,14 @@ class ExtractFeature(object):
             weight = torch.load('/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r152_mg/backbone.pth')
             model = eval("backbone.{}".format('iresnet152'))(False).cuda()
             model.load_state_dict(weight)
+        elif self.model_name == 'iresnetfc':
+            # self.weight_path = '/home/yuange/code/SelfServer/ArcFace/r18-backbone.pth'
+            # self.weight_path = '/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r18_occ6/backbone.pth'
+            # self.weight_path = '/GPUFS/sysu_zhenghch_1/yuange/SelfServer/DeepInsight/insightface/recognition/arcface_torch/arcface_r18_angle/backbone.pth'
+            self.weight_path = './tmp_49018/backbone.pth'
+            weight = torch.load(self.weight_path)
+            model = eval("backbone.{}".format('iresnetfc18'))(False).cuda()
+            model.load_state_dict(weight)
         elif self.model_name == 'arcface_r100_osb_r50':
             weight = torch.load('/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r100_osb_r50/backbone.pth')
             model = eval("{}".format('iresnet100_osb'))(False,
@@ -467,6 +475,8 @@ class ExtractFeature(object):
 
         features = features_flip + features
 
+        if not os.path.exists(self.save_path):
+            os.mkdir(self.save_path)
         save_file = os.path.join(self.save_path, self.task_name + '.npy')
         np.save(save_file, features)
         return features
