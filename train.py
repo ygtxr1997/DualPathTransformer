@@ -140,7 +140,7 @@ def main(args):
         dist.broadcast(ps, 0)
     awl.train()
 
-    cfg.lr = 0.02
+    cfg.lr = 0.03
     opt_backbone = torch.optim.SGD(
         params=[{'params': backbone.parameters()}],
         lr=cfg.lr / 512 * cfg.batch_size * world_size,

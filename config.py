@@ -27,11 +27,11 @@ print('output path: ', cfg.output)
 
 """ Setting for Model FaceTransformer """
 ft_set = edict()
-ft_set.dim = 256
+ft_set.dim = 128
 ft_set.depth = 1
-ft_set.heads = 6
+ft_set.heads = 4
 ft_set.dim_head = 64
-ft_set.mlp_dim = 192
+ft_set.mlp_dim = 128
 ft_set.emb_dropout = 0.1
 ft_set.dropout = 0.1
 
