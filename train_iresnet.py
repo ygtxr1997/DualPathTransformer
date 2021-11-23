@@ -110,20 +110,20 @@ def main(args):
     # awl = AutomaticWeightedLoss(2).cuda()
     # awl.train()
 
-    # cfg.lr = 0.1
-    # opt_backbone = torch.optim.SGD(
-    #     params=[{'params': backbone.parameters()}],
-    #     lr=cfg.lr / 512 * cfg.batch_size * world_size,
-    #     momentum=0.9, weight_decay=cfg.weight_decay)
-    opt_backbone = torch.optim.AdamW(
-        params=[{'params': backbone.parameters()},
-                ],
+    cfg.lr = 0.01
+    opt_backbone = torch.optim.SGD(
+        params=[{'params': backbone.parameters()}],
         lr=cfg.lr / 512 * cfg.batch_size * world_size,
-        betas=(0.9, 0.999),
-        eps=1e-08,
-        weight_decay=0.04,
-        amsgrad=False
-    )
+        momentum=0.9, weight_decay=cfg.weight_decay)
+    # opt_backbone = torch.optim.AdamW(
+    #     params=[{'params': backbone.parameters()},
+    #             ],
+    #     lr=cfg.lr / 512 * cfg.batch_size * world_size,
+    #     betas=(0.9, 0.999),
+    #     eps=1e-08,
+    #     weight_decay=0.04,
+    #     amsgrad=False
+    # )
     opt_pfc = torch.optim.SGD(
         params=[{'params': module_partial_fc.parameters()}],
         lr=cfg.lr / 512 * cfg.batch_size * world_size,
