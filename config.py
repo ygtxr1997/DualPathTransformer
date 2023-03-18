@@ -16,22 +16,22 @@ cfg.l1 = 1
 """
 0: Softmax; 1: ArcFace; 2: CosFace; 3: AMArcFace; 4: AMCosFace
 """
-cfg.loss_type = 2
+cfg.loss_type = 4
 cfg.am_a = 1.2
 cfg.am_k = 0.1
 
 """ Setting EXP ID """
 cfg.exp_id = 0
-cfg.output = "tmp_" + str(cfg.exp_id)
+cfg.output = "out/tmp_" + str(cfg.exp_id)
 print('output path: ', cfg.output)
 
 """ Setting for Model FaceTransformer """
 ft_set = edict()
-ft_set.dim = 128
-ft_set.depth = 1
-ft_set.heads = 4
+ft_set.dim = 512
+ft_set.depth = 4
+ft_set.heads = 8
 ft_set.dim_head = 64
-ft_set.mlp_dim = 128
+ft_set.mlp_dim = 512
 ft_set.emb_dropout = 0.1
 ft_set.dropout = 0.1
 
@@ -69,7 +69,7 @@ dptsa_set.mlp_dim = 384
 dptsa_set.emb_dropout = 0.1
 dptsa_set.dropout = 0.1
 
-cfg.model_set = ft_set
+cfg.model_set = dp_set
 print(cfg.model_set)
 
 if cfg.dataset == "emore":
@@ -93,7 +93,7 @@ elif cfg.dataset == "ms1m-retinaface-t2":
         cfg.nw = 14
     elif os.path.exists("/tmp/train_tmp"):
         cfg.rec = "/tmp/train_tmp/ms1m-retinaface"  # mount on RAM
-        cfg.nw = 0
+        cfg.nw = 12
     cfg.num_classes = 93431  # 91180
     cfg.num_epoch = 25
     cfg.warmup_epoch = -10  # -1
@@ -104,7 +104,7 @@ elif cfg.dataset == "ms1m-retinaface-t2":
             [m for m in [11, 17, 22] if m - 1 <= epoch])  # 0.1, 0.01, 0.001, 0.0001
 
     import numpy as np
-    cfg.min_lr = 0
+    cfg.min_lr = 1e-4
     def lr_fun_cos(cur_epoch):
         """Cosine schedule (cfg.OPTIM.LR_POLICY = 'cos')."""
         lr = 0.5 * (1.0 + np.cos(np.pi * cur_epoch / cfg.num_epoch))
@@ -120,7 +120,7 @@ elif cfg.dataset == "ms1m-retinaface-t2":
         return lr_fun_cos(cur_epoch=epoch)
         # return cur_lr / cfg.lr
 
-    cfg.lr_func = lr_step_func_cos
+    cfg.lr_func = lr_step_func
 
 elif cfg.dataset == "glint360k":
     # make training faster

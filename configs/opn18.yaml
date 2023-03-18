@@ -1,0 +1,31 @@
+model:
+  target: backbone.occ_net.OccPerceptualNetwork
+  params:
+    cnn_layers: [2, 2, 2, 2]
+    dim: 384
+    depth: 3
+    heads: 6
+    dim_head: 64
+    mlp_dim: 256
+    num_classes: 2
+
+train:
+  dataset: "ms1m-retinaface-t2"
+  rec: "/tmp/train_tmp/ms1m-retinaface"
+  nw: 10
+  base_bs: 512  # useless when xx_lr_scale is True
+  batch_size: 256  # 176 for fet12g, 160 for ft12g, 224 for ft06g
+  adam_epoch: 10
+  adam_lr_max: 3e-4
+  adam_lr_min: 3e-5
+  adam_lr_scale: True  # scale with bs?
+  sgd_epoch: 5
+  sgd_lr_max: 1e-4
+  sgd_lr_min: 0.
+  sgd_lr_scale: True  # scale with bs?
+  sgd_weight_decay: 5e-4
+  val_targets: ["lfw", ]
+  out_folder: "out"
+  out_name: "opn18"
+  exp_id: 1
+  fp16: False

@@ -1,0 +1,17 @@
+model:
+  target: backbone.face_transformer_swin.FaceSwinTransformerBackbone
+  params:
+    img_size: 112
+    patch_size: 2
+    num_classes: 512
+    depths: [2, 2, 6, 2]
+    embed_dim: 96
+    num_heads: [4, 8, 16, 32]
+    in_chans: 3
+    window_size: 7
+    mlp_ratio: 4
+    qkv_bias: True
+    drop_rate: 0.1
+    attn_drop_rate: 0.1
+    drop_path_rate: 0.1
+    patch_norm: True

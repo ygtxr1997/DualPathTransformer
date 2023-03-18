@@ -1,0 +1,22 @@
+model:
+  target: backbone.face_transformer.FaceTransformerWithHeader
+  params:
+    header_type: 'arcface'
+    header_num_classes: 93431
+    header_params_m: 0.5
+    header_params_s: 64.0
+    header_params_a: 0.
+    header_params_k: 1.0
+
+    backbone_config:
+      target: backbone.face_transformer.FaceTransformerBackbone
+      params:
+        cnn_layers: [2, 2, 2, 2]
+        depth: 0
+        dim: 512
+        heads: 8
+        dim_head: 64
+        mlp_dim: 512
+        emb_dropout: 0.1
+        dropout: 0.1
+        fp16: False

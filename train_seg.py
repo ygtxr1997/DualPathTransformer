@@ -3,6 +3,8 @@ import logging
 import os
 import time
 
+from omegaconf import OmegaConf
+
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
@@ -12,19 +14,17 @@ from torch.nn.utils import clip_grad_norm_
 import utils
 import backbone
 import losses
-from config import cfg
 from dataset.dataset_arcface import MXFaceDataset, DataLoaderX
 from tricks.partial_fc import PartialFC
 from utils.utils_callbacks import CallBackVerification, CallBackLogging, CallBackModelCheckpoint
 from utils.utils_logging import AverageMeter, init_logging
 from utils.utils_amp import MaxClipGradScaler
+from utils.utils_load_from_cfg import instantiate_from_config
 
 from dataset.dataset_aug import FaceRandOccMask, Msk2Tenser
 import torchvision.transforms as transforms
 from torch.autograd import Variable
 from thop import profile
-
-torch.backends.cudnn.benchmark = True
 
 
 def main(args):
@@ -41,63 +41,66 @@ def main(args):
     # torch.backends.cudnn.benchmark = False
     # torch.backends.cudnn.deterministic = True
 
-    world_size = int(os.environ['WORLD_SIZE'])
-    rank = int(os.environ['RANK'])
-    dist_url = "tcp://{}:{}".format(os.environ["MASTER_ADDR"], os.environ["MASTER_PORT"])
-    dist.init_process_group(backend='nccl', init_method=dist_url, rank=rank, world_size=world_size)
+    """ DDP Training """
+    try:
+        world_size = int(os.environ["WORLD_SIZE"])
+        rank = int(os.environ["RANK"])
+        dist.init_process_group("nccl")
+    except KeyError:
+        world_size = 1
+        rank = 0
+        dist.init_process_group(
+            backend="nccl",
+            init_method="tcp://127.0.0.1:12584",
+            rank=rank,
+            world_size=world_size,
+        )
     local_rank = args.local_rank
     torch.cuda.set_device(local_rank)
 
-    if not os.path.exists(cfg.output) and rank is 0:
-        os.makedirs(cfg.output)
+    """ Load from cfg """
+    config = OmegaConf.load(args.config)
+    if args.resume >= 1:
+        config = OmegaConf.load(os.path.join(args.resume_folder, 'opn18.yaml'))
+    cfg_train = config.train
+    output_folder = os.path.join(cfg_train.out_folder, "%s_%s" % (cfg_train.out_name, cfg_train.exp_id))
+    if not os.path.exists(output_folder) and rank is 0:
+        os.makedirs(output_folder)
     else:
         time.sleep(2)
+    if rank is 0:
+        os.system('rm -r %s' % os.path.join(output_folder, 'snapshot/'))
+        os.makedirs(os.path.join(output_folder, 'snapshot/'), exist_ok=True)
 
     log_root = logging.getLogger()
-    init_logging(log_root, rank, cfg.output)
-    img_tf_train = transforms.Compose(
-        [transforms.ToTensor(), ])
-    mask_tf = transforms.Compose([Msk2Tenser(), ])
+    init_logging(log_root, rank, output_folder)
+    if rank is 0 and args.resume == 0:
+        os.system('cp %s %s' % (args.config, output_folder))
+        logging.info('config file copied to %s.' % output_folder)
     trainset = FaceRandOccMask(
-        root_dir=cfg.rec,
+        root_dir=cfg_train.rec,
         local_rank=0,
-        img_transform=img_tf_train,
-        msk_transform=mask_tf,
         is_train=True,
-        out_size=112,
-        gray=False,
-        norm=True)
+        out_size=(112, 112),
+        is_gray=False,
+        use_norm=True)
     # trainset = MXFaceDataset(
-    #     root_dir=cfg.rec,
+    #     root_dir=cfg_train.rec,
     #     local_rank=local_rank)
     train_sampler = torch.utils.data.distributed.DistributedSampler(
         trainset, shuffle=True)
-    nw = 6
+    nw = cfg_train.nw
     train_loader = DataLoaderX(
-        local_rank=local_rank, dataset=trainset, batch_size=cfg.batch_size,
+        local_rank=local_rank, dataset=trainset, batch_size=cfg_train.batch_size,
         sampler=train_sampler, num_workers=nw, pin_memory=True, drop_last=True)
 
-    dropout = 0.4 if cfg.dataset is "webface" else 0
-    backbone = eval("backbone.{}".format(args.network))(False,
-                                                        fp16=cfg.fp16,
-                                                        num_classes=cfg.num_classes,
-                                                        dim=cfg.model_set.dim,
-                                                        depth=cfg.model_set.depth,
-                                                        heads=cfg.model_set.heads,
-                                                        mlp_dim=cfg.model_set.mlp_dim,
-                                                        emb_dropout=cfg.model_set.emb_dropout,
-                                                        dim_head=cfg.model_set.dim_head,
-                                                        dropout=cfg.model_set.dropout
-                                                        ).to(local_rank)
+    backbone = instantiate_from_config(config.model).to(local_rank)
 
     if args.resume:
-        try:
-            backbone_pth = os.path.join(cfg.output, "backbone.pth")
-            backbone.load_state_dict(torch.load(backbone_pth, map_location=torch.device(local_rank)))
-            if rank is 0:
-                logging.info("backbone resume successfully!")
-        except (FileNotFoundError, KeyError, IndexError, RuntimeError):
-            logging.info("resume fail, backbone init successfully!")
+        backbone_pth = os.path.join(output_folder, "backbone.pth")
+        backbone.load_state_dict(torch.load(backbone_pth, map_location=torch.device(local_rank)))
+        if rank is 0:
+            logging.info("backbone resume successfully from %s!" % args.resume_folder)
 
     for ps in backbone.parameters():
         dist.broadcast(ps, 0)
@@ -106,77 +109,87 @@ def main(args):
         find_unused_parameters=True)
     backbone.train()
 
-    margin_softmax = eval("losses.{}".format(args.loss))()
-    module_partial_fc = PartialFC(
-        rank=rank, local_rank=local_rank, world_size=world_size, resume=args.resume,
-        batch_size=cfg.batch_size, margin_softmax=margin_softmax, num_classes=cfg.num_classes,
-        sample_rate=cfg.sample_rate, embedding_size=cfg.embedding_size, prefix=cfg.output)
+    lr_adam = cfg_train.adam_lr_max
+    lr_sgd = cfg_train.sgd_lr_max
+    lr_scale = cfg_train.batch_size * world_size / cfg_train.base_bs
+    if cfg_train.adam_lr_scale:
+        lr_adam *= lr_scale
+    if cfg_train.sgd_lr_scale:
+        lr_sgd *= lr_scale
 
-    # opt_backbone = torch.optim.SGD(
-    #     params=[{'params': backbone.parameters()}],
-    #     lr=cfg.lr / 512 * cfg.batch_size * world_size,
-    #     momentum=0.9, weight_decay=cfg.weight_decay)
-    # opt_backbone = torch.optim.Adam(
-    #     params=[{'params': backbone.parameters()}],
-    #     lr=cfg.lr / 512 * cfg.batch_size * world_size,
-    #     betas=(0.9, 0.999),
-    #     eps=1e-08,
-    #     weight_decay=0.04,
-    #     amsgrad=False
-    # )
-    opt_backbone = torch.optim.AdamW(
-        params=[{'params': backbone.parameters()}],
-        lr=cfg.lr / 512 * cfg.batch_size * world_size,
+    opt_adam = torch.optim.AdamW(
+        params=[{'params': backbone.parameters()},
+                # {'params': awl.parameters(), 'weight_decay': 0}
+                ],
+        lr=lr_adam,
         betas=(0.9, 0.999),
-        eps=1e-08,
-        weight_decay=0.04,
+        eps=1e-05,
+        weight_decay=0.1,
         amsgrad=False
     )
-    opt_pfc = torch.optim.SGD(
-        params=[{'params': module_partial_fc.parameters()}],
-        lr=cfg.lr / 512 * cfg.batch_size * world_size,
-        momentum=0.9, weight_decay=cfg.weight_decay)
+    opt_sgd = torch.optim.SGD(
+        params=[{'params': backbone.parameters()}],
+        lr=lr_sgd,
+        momentum=0.9, weight_decay=5e-4)
 
-    scheduler_backbone = torch.optim.lr_scheduler.LambdaLR(
-        optimizer=opt_backbone, lr_lambda=cfg.lr_func)
-    scheduler_pfc = torch.optim.lr_scheduler.LambdaLR(
-        optimizer=opt_pfc, lr_lambda=cfg.lr_func)
+    scheduler_adam = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer=opt_adam, T_max=cfg_train.adam_epoch, eta_min=cfg_train.adam_lr_min,
+    )
+    scheduler_sgd = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer=opt_sgd, T_max=cfg_train.sgd_epoch, eta_min=cfg_train.sgd_lr_min,
+    )
 
-    start_epoch = 0
-    total_step = int(len(trainset) / cfg.batch_size / world_size * cfg.num_epoch)
-    if rank is 0: logging.info("Total Step is: %d" % total_step)
+    full_epoch = cfg_train.adam_epoch + cfg_train.sgd_epoch
+    total_step = int(len(trainset) / cfg_train.batch_size / world_size *
+                     (full_epoch - args.resume))
+    if rank == 0:
+        logging.info("Total Step is: %d" % total_step)
 
-    callback_verification = CallBackVerification(8000, rank, cfg.val_targets, cfg.rec)
-    callback_logging = CallBackLogging(50, rank, total_step, cfg.batch_size, world_size, None)
-    callback_checkpoint = CallBackModelCheckpoint(rank, cfg.output)
+    # callback_verification = CallBackVerification(8000, rank, cfg_train.val_targets, cfg_train.rec)
+    callback_logging = CallBackLogging(50, rank, total_step, cfg_train.batch_size, world_size, None)
+    callback_checkpoint = CallBackModelCheckpoint(rank, output_folder)
 
     loss = AverageMeter()
     global_step = 0
-    grad_scaler = MaxClipGradScaler(init_scale=cfg.batch_size,  # cfg.batch_size
-                                    max_scale=128 * cfg.batch_size,
-                                    growth_interval=100) if cfg.fp16 else None
+    grad_scaler = MaxClipGradScaler(init_scale=cfg_train.batch_size,  # cfg_train.batch_size
+                                    max_scale=128 * cfg_train.batch_size,
+                                    growth_interval=100) if cfg_train.fp16 else None
 
     from tricks.consensus_loss import StructureConsensuLossFunction
     seg_criterion = StructureConsensuLossFunction(10.0, 5.0, 'idx', 'idx')
     cls_criterion = torch.nn.CrossEntropyLoss()
 
-    from torch.cuda import amp
-    scaler = amp.GradScaler(init_scale=cfg.batch_size,
-                            growth_interval=100, enabled=cfg.fp16)
-
-    for epoch in range(start_epoch, cfg.num_epoch):
+    for epoch in range(0, full_epoch):
         train_sampler.set_epoch(epoch)
-        for step, (img, msk, label) in enumerate(train_loader):
-        # for step, (img, label) in enumerate(train_loader):
+        if epoch < cfg_train.adam_epoch:
+            scheduler = scheduler_adam
+            opt = opt_adam
+            inner_epoch = epoch
+        else:
+            scheduler = scheduler_sgd
+            opt = opt_sgd
+            inner_epoch = epoch - cfg_train.adam_epoch
+
+        if epoch < args.resume:
+            if rank is 0:
+                print('=====> skip epoch %d' % (epoch))
+            scheduler.step()
+            continue
+
+        for step, batch in enumerate(train_loader):
             global_step += 1
-            # if global_step % 100 == 0:
-            #     print('rank:', rank, time.strftime("[%Y-%m-%d-%H_%M_%S]", time.localtime()), global_step)
+
+            """ (img, label), MXFaceDataset
+                            (img, msk, label), FaceByRandOccMask (no KD)
+                            (img, msk, ori, label), FaceByRandOccMask (with KD)
+                        """
+            img, label = batch[0], batch[-1]
+            msk = batch[1] if len(batch) >= 3 else None
+            # ori = batch[2] if len(batch) == 4 and conf.peer_params.use_ori else None
 
             """ op1: full classes """
-            with amp.autocast(cfg.fp16):
-                # [f_id, msk_final] = backbone(img)
+            with torch.cuda.amp.autocast(cfg_train.fp16):
                 msk_final = backbone(img, label)
-                # f_id = F.normalize(f_id)  # TODO: close normalize
 
                 """ 1. occ """
                 with torch.no_grad():
@@ -191,7 +204,7 @@ def main(args):
                 l1 = 1
                 total_loss = cls_loss + l1 * seg_loss
 
-            if global_step % 5 == 0 and True:
+            if global_step % 200 == 0 and True:
                 import numpy as np
                 import PIL.Image as Image
                 i = global_step
@@ -202,94 +215,61 @@ def main(args):
                 snapshot[:, :, 2] = (img[0][2].cpu().data.numpy() + 1.0) * 127.5
                 snapshot = Image.fromarray(snapshot.astype(np.uint8))
                 snapshot.save(
-                    os.path.join(cfg.output, 'snapshot/' + str(i) + '_face.jpg'))
+                    os.path.join(output_folder, 'snapshot/' + str(i) + '_face.jpg'))
 
                 mask = (msk_final[0].float().cpu().max(0)[1].data.numpy()) * 255
                 mask = Image.fromarray(mask.astype(np.uint8))
-                mask.save(os.path.join(cfg.output, 'snapshot/' + str(i) + '_seg.jpg'))
+                mask.save(os.path.join(output_folder, 'snapshot/' + str(i) + '_seg.jpg'))
 
                 gt_msk = (msk[0].cpu().data.numpy()) * 255
                 gt_msk = Image.fromarray(gt_msk.astype(np.uint8))
-                gt_msk.save(os.path.join(cfg.output, 'snapshot/' + str(i) + '_gt_occ.jpg'))
+                gt_msk.save(os.path.join(output_folder, 'snapshot/' + str(i) + '_gt_occ.jpg'))
 
-            if cfg.fp16:
+            if cfg_train.fp16:
                 grad_scaler.scale(total_loss).backward()
-                grad_scaler.unscale_(opt_backbone)
+                grad_scaler.unscale_(opt)
                 clip_grad_norm_(backbone.parameters(), max_norm=5, norm_type=2)
-                grad_scaler.step(opt_backbone)
+                grad_scaler.step(opt)
                 grad_scaler.update()
             else:
                 total_loss.backward()
                 clip_grad_norm_(backbone.parameters(), max_norm=5, norm_type=2)
-                opt_backbone.step()
-            opt_backbone.zero_grad()
+                opt.step()
+            opt.zero_grad()
 
             loss_v = total_loss
             """ end - CE loss """
 
-            """ op2. partial fc """
-            # features = backbone(img)
-            # # features = F.normalize(backbone(img))  # CosFace needs normalize
-            # # from torchinfo import summary
-            # # summary(backbone, input_size=(1, 3, 112, 112))
-            # x_grad, loss_v = module_partial_fc.forward_backward(label, features, opt_pfc)
-            # if cfg.fp16:
-            #     features.backward(grad_scaler.scale(x_grad))
-            #     grad_scaler.unscale_(opt_backbone)
-            #     clip_grad_norm_(backbone.parameters(), max_norm=5, norm_type=2)
-            #     grad_scaler.step(opt_backbone)
-            #     grad_scaler.update()
-            # else:
-            #     features.backward(x_grad)
-            #     clip_grad_norm_(backbone.parameters(), max_norm=5, norm_type=2)
-            #     opt_backbone.step()
-            #
-            # opt_pfc.step()
-            # module_partial_fc.update()
-            #
-            # # if global_step % 50 == 3:
-            # #     for name, params in backbone.named_parameters():
-            # #         if params.grad is not None:
-            # #             logging.info('-->name: %s, -->grad_val: %f,'
-            # #                          '-->max: %f, -->min:%f'
-            # #                          '' % (name, params.grad.data.cpu().mean(),
-            # #                                params.data.cpu().max(),
-            # #                                params.data.cpu().min()))
-            # #         else:
-            # #             logging.info('-->name: %s, -->grad: None' % (name))
-            #
-            # opt_backbone.zero_grad()
-            # opt_pfc.zero_grad()
-            # seg_loss = 0.
-            # cls_loss = loss_v
-            # l1 = 0.
-            """ end - partial fc"""
-
             if global_step % 100 == 0 and rank == 0:
-                print('[exp_%d], seg_loss=%.4f, cls_loss=%.4f, scale=%.4f, lr=%.4f, l1=%.4f, '
-                      'num_workers=%d'
-                      % (cfg.exp_id, seg_loss, cls_loss, scaler.get_scale(), cfg.lr, l1, nw))
+                logging.info('[%s], seg_loss=%.4f, cls_loss=%.4f, lr_adam=%.4f(scale:%s), lr_sgd=%.4f(scale:%s),'
+                             'num_workers=%d, bs=%d*%d'
+                             % (output_folder, seg_loss, 0,
+                                cfg_train.adam_lr_max, cfg_train.adam_lr_scale,
+                                cfg_train.sgd_lr_max, cfg_train.sgd_lr_scale,
+                                nw, cfg_train.batch_size, world_size))
 
             loss.update(loss_v, 1)
-            callback_logging(global_step, loss, epoch, cfg.fp16, grad_scaler)
-            callback_verification(global_step, backbone)
+            callback_logging(global_step, loss, epoch, cfg_train.fp16, grad_scaler)
+            # callback_verification(global_step, backbone)
 
             if global_step % 1000 == 0:
-                for param_group in opt_backbone.param_groups:
+                for param_group in opt.param_groups:
                     lr = param_group['lr']
                 print(lr)
 
-        callback_checkpoint(global_step, backbone, module_partial_fc)
-        scheduler_backbone.step()
-        # scheduler_pfc.step()
+        callback_checkpoint(global_step, backbone, is_adam_last=epoch == cfg_train.adam_epoch - 1,
+                            partial_fc=None, awloss=None, )
+        scheduler.step()
     dist.destroy_process_group()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='PyTorch DualPathTransformer Training')
     parser.add_argument('--local_rank', type=int, default=0, help='local_rank')
-    parser.add_argument('--network', type=str, default='st_r18', help='backbone network')
+    parser.add_argument('--network', type=str, default='opn', help='backbone network')
+    parser.add_argument('--config', type=str, default='configs/opn18.yaml', help='config path')
     parser.add_argument('--loss', type=str, default='ArcFace', help='loss function')
     parser.add_argument('--resume', type=int, default=0, help='model resuming')
+    parser.add_argument('--resume_folder', type=str, default='', help='model resuming folder')
     args_ = parser.parse_args()
     main(args_)

@@ -16,8 +16,10 @@ import sys
 import warnings
 
 import torch
+from torch.utils.data import DataLoader
+from torchvision.transforms.functional import hflip
 
-import backbone
+import backbones
 
 from PIL import Image
 import numpy as np
@@ -28,77 +30,74 @@ import time
 from tqdm import tqdm
 import re
 from scipy.special import expit
+from typing import Union
 
-from dataset.img_preprocess_no_msk import Randomblock, RandomConnectedPolygon, RandomTrueObject
+from datasets.augment.rand_occ import RandomBlock, RandomConnectedPolygon, RandomRealObject
+from eval.eval_dataset import EvalDataset, MXNetEvalDataset, MXNetTsneDataset, MFR2EvalDataset, MFVEvalDataset
+from eval.eval_dataset import MXNetRestorerDataset
+from eval.eval_dataset import IdentifyDataset, MegaFaceDataset
 
-from config import cfg
-
-a = ["lfw", "cfp_fp", "agedb_30"]
-divisor = 1
-TASKS = {
-    'lfw': {
-        'img_root': '/home/yuange/dataset/PKU-Masked-Face',
-        'list_file': 'ver24000.list',
-        'save_path': './features',
-        'task_name': 'lfw',
-        'model_name': 'arcface_r18',
-        'resume_path': '',
-        'num_classes': 10575,
-        'transform': transforms.Compose([transforms.Resize([112, 112]),
-                                         # Randombaboon(),
-                                         # Randomblock(),
-                                         transforms.ToTensor()]),
-        'ground_truth_label': list(np.zeros([3000 * 4 // divisor], dtype=np.int))
-                              + list(np.ones([3000 * 4 // divisor], dtype=np.int)),
-    },
-    'cfp': {
-        'img_root': '/home/yuange/dataset/PKU-Masked-Face',
-        'list_file': 'ver24000.list',
-        'save_path': './features',
-        'task_name': 'cfp_fp',
-        'model_name': 'arcface_r18',
-        'resume_path': '',
-        'num_classes': 10575,
-        'transform': transforms.Compose([transforms.Resize([112, 112]),
-                                         # Randombaboon(),
-                                         # Randomblock(),
-                                         transforms.ToTensor()]),
-        'ground_truth_label': list(np.zeros([3000 * 4 // divisor], dtype=np.int))
-                              + list(np.ones([3000 * 4 // divisor], dtype=np.int)),
-    },
-    'agedb': {
-        'img_root': '/home/yuange/dataset/PKU-Masked-Face',
-        'list_file': 'ver24000.list',
-        'save_path': './features',
-        'task_name': 'agedb_30',
-        'model_name': 'arcface_r18',
-        'resume_path': '',
-        'num_classes': 10575,
-        'transform': transforms.Compose([transforms.Resize([112, 112]),
-                                         # Randombaboon(),
-                                         # Randomblock(),
-                                         transforms.ToTensor()]),
-        'ground_truth_label': list(np.zeros([3000 * 4 // divisor], dtype=np.int))
-                              + list(np.ones([3000 * 4 // divisor], dtype=np.int)),
-    },
-}
+from config import config_init, load_yaml
 
 
-class ExtractFeature(object):
-    '''特征提取类'''
-    def __init__(self, task):
-        self.img_root = task['img_root']
-        if not os.path.exists(self.img_root):
-            self.img_root = '/GPUFS/sysu_zhenghch_1/yuange/datasets/' + self.img_root[len('/home/yuange/dataset/'):]
-        self.list_file = task['list_file']
-        self.save_path = task['save_path']
-        self.task_name = task['task_name']
-        self.model_name = task['model_name']
-        self.resume_path = task['resume_path']
-        self.num_classes = task['num_classes']
-        self.transform = task['transform']
+class MXNetEvaluator(object):
+    def __init__(self,
+                 eval_dataset: Union[EvalDataset, IdentifyDataset],
+                 occ_trans,
+                 cfg,
+                 args,
+                 ):
+        """ MXNetEvaluator """
+        ''' yaml config '''
+        self.cfg = cfg
+        self.is_gray = cfg.is_gray
+        self.channel = 1 if self.is_gray else 3
+        self.out_size = cfg.out_size  # (w,h)
+        self.dim_feature = cfg.dim_feature
+
+        ''' dataset & dataloader '''
+        self.eval_mode = '1:1' if isinstance(eval_dataset, EvalDataset) else '1:N'
+        self.eval_dataset = eval_dataset
+        self.eval_dataset.update_occ_trans(occ_trans)
+        for bs in np.arange(40, 0, -1):
+            if len(eval_dataset) % bs == 0:
+                self.batch_size = int(bs)
+                print('[Batch Size]: %d' % bs)
+                break
+        self.eval_loader = DataLoader(
+            self.eval_dataset, self.batch_size,
+            num_workers=12, shuffle=False, drop_last=False
+        )
+
+        if self.eval_mode == '1:1':
+            issame_list = eval_dataset.issame_list
+            self.num = len(eval_dataset) * 2  # n = pair * 2
+            self.issame_list = issame_list  # True:same
+            self.intsame_list = [0 if x else 1 for x in issame_list]  # 0:same
+        else:
+            self.num = len(eval_dataset)
+            self.probe_cnt = len(eval_dataset.probe_img)
+            self.gallery_cnt = len(eval_dataset.gallery_img)
+
+        ''' args '''
+        self.model_name = args.network
+        self.weight_folder = args.weight_folder
+        self.is_vis = args.is_vis
+        self.dataset_name = args.dataset
+        self.tsne_id_cnt = args.identity_cnt  # used by tsne
+
+        ''' model '''
+        self.model = self._load_model()
+
+        ''' visualization '''
+        save_folder = os.path.join('./vis', self.dataset_name)
+        if os.path.exists(save_folder):
+            os.system('rm -r %s' % save_folder)
+        os.makedirs(save_folder, exist_ok=True)
+        self.save_folder = save_folder
 
     def _load_model(self):
+        cfg = self.cfg
         if self.model_name == 'arcface_r18':
             # self.weight_path = '/home/yuange/code/SelfServer/ArcFace/r18-backbone.pth'
             # self.weight_path = '/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r18_occ6/backbone.pth'
@@ -127,415 +126,337 @@ class ExtractFeature(object):
             weight = torch.load(self.weight_path)
             model = eval("backbone.{}".format('iresnet100'))(False).cuda()
             model.load_state_dict(weight)
-        elif self.model_name == 'arcface_r152':
-            # weight = torch.load('/home/yuange/code/SelfServer/ArcFace/r152-backbone.pth')
-            weight = torch.load('/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r152_mg/backbone.pth')
-            model = eval("backbone.{}".format('iresnet152'))(False).cuda()
-            model.load_state_dict(weight)
-        elif self.model_name == 'iresnetfc':
-            # self.weight_path = '/home/yuange/code/SelfServer/ArcFace/r18-backbone.pth'
-            # self.weight_path = '/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r18_occ6/backbone.pth'
-            # self.weight_path = '/GPUFS/sysu_zhenghch_1/yuange/SelfServer/DeepInsight/insightface/recognition/arcface_torch/arcface_r18_angle/backbone.pth'
-            self.weight_path = './tmp_49018/backbone.pth'
-            weight = torch.load(self.weight_path)
-            model = eval("backbone.{}".format('iresnetfc18'))(False).cuda()
-            model.load_state_dict(weight)
-        elif self.model_name == 'arcface_r100_osb_r50':
-            weight = torch.load('/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r100_osb_r50/backbone.pth')
-            model = eval("{}".format('iresnet100_osb'))(False,
-                                                        dropout=0,
-                                                        fp16=False,
-                                                        osb='r50').cuda()
-            model.load_state_dict(weight)
-        elif self.model_name == 'arcface_r50_osb_r18':
-            self.weight_path = '/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r50_osb_r18_aaai/backbone.pth'
-            weight = torch.load(self.weight_path)
-            model = eval("{}".format('iresnet50_osb'))(False,
-                                                       dropout=0,
-                                                       fp16=False,
-                                                       osb='r18').cuda()
-            model.load_state_dict(weight)
-        elif self.model_name == 'arcface_r50_osb_r34':
-            self.weight_path = '/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r50_osb_r34_aaai/backbone.pth'
-            weight = torch.load(self.weight_path)
-            model = eval("{}".format('iresnet50_osb'))(False,
-                                                       dropout=0,
-                                                       fp16=False,
-                                                       osb='r34').cuda()
-            model.load_state_dict(weight)
-        elif self.model_name == 'arcface_r50_osb_r50':
-            self.weight_path = '/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r50_osb_r50_seg01_aaai/backbone.pth'
-            weight = torch.load(self.weight_path)
-            model = eval("{}".format('iresnet50_osb'))(False,
-                                                       dropout=0,
-                                                       fp16=False,
-                                                       osb='r50').cuda()
-            model.load_state_dict(weight)
-        elif self.model_name == 'arcface_r18_osb_r18':
-            self.weight_path = '/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r18_osb_r18_aaai/backbone.pth'
+        elif self.model_name == 'msml':
+            # self.weight_path = '/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r18_osb_r18_aaai/backbone.pth'
             # self.weight_path = '/GPUFS/sysu_zhenghch_1/yuange/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r18_osb18_mlm4_1115_drop01_swinmei/backbone.pth'
+            self.weight_path = os.path.join(self.weight_folder, 'backbone.pth')
             weight = torch.load(self.weight_path)
-            model = eval("{}".format('iresnet18_osb'))(False,
-                                                       dropout=0,
-                                                       fp16=False,
-                                                       osb='r18',
-                                                       mlm_type=cfg.mlm_type,
-                                                       mlm_list=cfg.mlm_list,
-                                                       ).cuda()
-            model.load_state_dict(weight)
-        elif self.model_name == 'arcface_r18_osb_r34':
-            self.weight_path = '/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r18_osb_r34_aaai/backbone.pth'
-            weight = torch.load(self.weight_path)
-            model = eval("{}".format('iresnet18_osb'))(False,
-                                                       dropout=0,
-                                                       fp16=False,
-                                                       osb='r34').cuda()
-            model.load_state_dict(weight)
-        elif self.model_name == 'arcface_r18_osb_r50':
-            self.weight_path = '/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r18_osb_r50_aaai/backbone.pth'
-            weight = torch.load(self.weight_path)
-            model = eval("{}".format('iresnet18_osb'))(False,
-                                                       dropout=0,
-                                                       fp16=False,
-                                                       osb='r50').cuda()
-            model.load_state_dict(weight)
-        elif self.model_name == 'arcface_r34_osb_r18':
-            self.weight_path = '/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r34_osb_r18_aaai/backbone.pth'
-            weight = torch.load(self.weight_path)
-            model = eval("{}".format('iresnet34_osb'))(False,
-                                                       dropout=0,
-                                                       fp16=False,
-                                                       osb='r18').cuda()
-            model.load_state_dict(weight)
-        elif self.model_name == 'arcface_r34_osb_r50':
-            self.weight_path = '/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r34_osb_r50_aaai/backbone.pth'
-            weight = torch.load(self.weight_path)
-            model = eval("{}".format('iresnet34_osb'))(False,
-                                                       dropout=0,
-                                                       fp16=False,
-                                                       osb='r50').cuda()
-            model.load_state_dict(weight)
-        elif self.model_name == 'arcface_r50_res':
-            weight = torch.load('/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/resnet50/backbone.pth')
-            model = eval("backbone.{}".format('resnet50'))(False).cuda()
-            model.load_state_dict(weight)
-        elif self.model_name == 'arcface_r100_osb_r18':
-            self.weight_path = '/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r100_osb_r18_aaai/backbone.pth'
-            weight = torch.load(self.weight_path)
-            model = eval("{}".format('iresnet100_osb'))(False,
-                                                       dropout=0,
-                                                       fp16=False,
-                                                       osb='r18').cuda()
-            model.load_state_dict(weight)
-        elif self.model_name == 'ft_r18':
-            self.weight_path = './tmp_44106/backbone.pth'
-            weight = torch.load(self.weight_path)
-            model = eval("backbone.{}".format('ft_r50'))(False,
-                                                        fp16=cfg.fp16,
+            model = eval("backbones.{}".format('MSML'))(frb_type=cfg.frb_type,
+                                                        frb_pretrained=False,
+                                                        osb_type=cfg.osb_type,
+                                                        fm_layers=cfg.fm_layers,
+                                                        header_type=cfg.header_type,
+                                                        header_params=cfg.header_params,
                                                         num_classes=cfg.num_classes,
-                                                        dim=cfg.model_set.dim,
-                                                        depth=cfg.model_set.depth,
-                                                        heads=cfg.model_set.heads,
-                                                        mlp_dim=cfg.model_set.mlp_dim,
-                                                        emb_dropout=cfg.model_set.emb_dropout,
-                                                        dim_head=cfg.model_set.dim_head,
-                                                        dropout=cfg.model_set.dropout
+                                                        fp16=False,
+                                                        use_osb=cfg.use_osb,
+                                                        fm_params=cfg.fm_params,
+                                                        peer_params=cfg.peer_params,
                                                         ).cuda()
             model.load_state_dict(weight)
-        elif self.model_name == 'dpt_r18':
-            self.weight_path = './tmp_45124/backbone.pth'
-            weight = torch.load(self.weight_path)
-            model = eval("backbone.{}".format('dpt_r34s3_ca1'))(False,
-                                                        fp16=cfg.fp16,
-                                                        num_classes=cfg.num_classes,
-                                                        dim=cfg.model_set.dim,
-                                                        depth=cfg.model_set.depth,
-                                                        heads_id=cfg.model_set.heads_id,
-                                                        heads_oc=cfg.model_set.heads_oc,
-                                                        mlp_dim_id=cfg.model_set.mlp_dim_id,
-                                                        mlp_dim_oc=cfg.model_set.mlp_dim_oc,
-                                                        emb_dropout=cfg.model_set.emb_dropout,
-                                                        dim_head_id=cfg.model_set.dim_head_id,
-                                                        dim_head_oc=cfg.model_set.dim_head_oc,
-                                                        dropout_id=cfg.model_set.dropout_id,
-                                                        dropout_oc=cfg.model_set.dropout_oc
-                                                        ).cuda()
-            model.load_state_dict(weight)
-        elif self.model_name == 'dptsa_r18':
-            self.weight_path = './tmp_42124/backbone.pth'
-            weight = torch.load(self.weight_path)
-            model = eval("backbone.{}".format('dpt_only_sa_r34'))(False,
-                                                          fp16=cfg.fp16,
-                                                          num_classes=cfg.num_classes,
-                                                          dim=cfg.model_set.dim,
-                                                          depth=cfg.model_set.depth,
-                                                          heads=cfg.model_set.heads,
-                                                          mlp_dim=cfg.model_set.mlp_dim,
-                                                          emb_dropout=cfg.model_set.emb_dropout,
-                                                          dim_head=cfg.model_set.dim_head,
-                                                          dropout=cfg.model_set.dropout,
-                                                        ).cuda()
-            model.load_state_dict(weight)
+            for fm_idx in range(4):
+                fm_op = model.frb.fm_ops[fm_idx]
+                fm_op.open_saving(self.is_vis)
+        elif 'from2021' in self.model_name:
+            self.weight_path = ''
+            print('loading TPAMI2021 FROM model...')
+            model = backbones.From2021()
         else:
-            print('Error model type\n')
+            raise ValueError('Error model type\n')
 
         model.eval()
         model = torch.nn.DataParallel(model).cuda()
 
-        if self.resume_path:
-            print("=> loading checkpoint '{}'".format(self.resume_path))
-            checkpoint = torch.load(self.resume_path)
-            model.load_state_dict(checkpoint['state_dict'])
-        else:
-            print("=> no checkpoint found at '{}'".format(self.resume_path))
-
         return model
 
-    def _load_one_input(self, img, index, flip=False, protocol='NB'):
+    def _infer(self, x, ori=None):
+        if ori is None:
+            output = self.model(x)
+        else:
+            output = self.model(x, ori=ori)
 
-        if flip:
-            img = img.transpose(Image.FLIP_LEFT_RIGHT)
+        if type(output) is tuple:
+            feature = output[0]
+            final_seg = output[1]
+        else:
+            feature = output
+            final_seg = None
 
-        common_trans = transforms.Compose([transforms.ToTensor()])
+        return feature, final_seg
 
-        if protocol == 'NB':
-            img = self.transform(img) if index % 2 == 0 else common_trans(img)
-        elif protocol == 'BB':
-            img = self.transform(img)
+    def _vis_segmentation_result(self,
+                                 img: torch.Tensor,
+                                 seg: torch.Tensor,
+                                 index_list: list):
+        print('Visualizing segmentation results...')
+        save_folder = self.save_folder
+        n = self.num
+        assert len(index_list) * 2 <= n
+        for idx in range(n // 2):
+            if not idx in index_list:
+                continue
+            ''' predicted segmentation masks '''
+            seg1_pil, seg2_pil = self.__t2p_segmentation_result(seg[idx * 2], seg[idx * 2 + 1])
+            seg1_pil.save(os.path.join(save_folder, str(idx * 2) + '_predict.jpg'))
+            seg2_pil.save(os.path.join(save_folder, str(idx * 2 + 1) + '_predict.jpg'))
 
-        return img
+            ''' input faces '''
+            img1_pil, img2_pil = self.__t2p_input(img[idx * 2], img[idx * 2 + 1], is_gray=self.is_gray)
+            img1_pil.save(os.path.join(save_folder, str(idx * 2) + '_input.jpg'))
+            img2_pil.save(os.path.join(save_folder, str(idx * 2 + 1) + '_input.jpg'))
 
-    def _visualize_features(self, features):
-        """ Visualize the 256-D features """
+    @staticmethod
+    def __t2p_segmentation_result(seg1: torch.Tensor, seg2: torch.Tensor):
+        assert seg1.ndim == 3  # (C,H,W)
+        ''' predicted segmentation masks '''
+        seg1_np = seg1.max(0)[1].cpu().numpy() * 255  # (h,w)
+        seg2_np = seg2.max(0)[1].cpu().numpy() * 255  # (h,w)
+        seg1_pil = Image.fromarray(seg1_np.astype(np.uint8))
+        seg2_pil = Image.fromarray(seg2_np.astype(np.uint8))
+        return seg1_pil, seg2_pil
+
+    @staticmethod
+    def __t2p_input(img1: torch.Tensor, img2: torch.Tensor, is_gray: bool = False):
+        assert img1.ndim == 3  # (C,H,W)
+        ''' input faces '''
+        if is_gray:
+            img1_pil = Image.fromarray((img1.cpu().numpy() * 255).astype(np.uint8), mode='L')
+            img2_pil = Image.fromarray((img2.cpu().numpy() * 255).astype(np.uint8), mode='L')
+        else:
+            img1_pil = Image.fromarray(((img1.permute(1, 2, 0).cpu().numpy() + 1.) * 127.5).astype(np.uint8),
+                                       mode='RGB')
+            img2_pil = Image.fromarray(((img2.permute(1, 2, 0).cpu().numpy() + 1.) * 127.5).astype(np.uint8),
+                                       mode='RGB')
+        return img1_pil, img2_pil
+
+    def _vis_intermediate_feature_maps(self,
+                                       index_list: list):
+        """ Visualize Intermediate Feature Maps of FM Operators """
+        print('Visualizing intermediate feature maps...')
+        save_folder = self.save_folder
+        n = self.num
+        assert len(index_list) <= n
+
+        for fm_idx in (0, 1, ):
+            fm_op = self.model.module.frb.fm_ops[fm_idx]
+            fm_op.plot_intermediate_feature_maps(vis_index_list=index_list,
+                                                 save_folder=save_folder)
+
+    def _vis_restored_feature_maps(self,
+                                   index_list: list):
+        """ Visualize Restored Feature Maps of FM Operators """
+        print('Visualizing restored feature maps...')
+        save_folder = self.save_folder
+        n = self.num
+        assert len(index_list) <= n
+
+        for fm_idx in (0, 1, 2, 3):
+            fm_op = self.model.module.frb.fm_ops[fm_idx]
+            fm_op.plot_restored_feature_maps(vis_index_list=index_list,
+                                             save_folder=save_folder)
+
+    @staticmethod
+    def __t2n_feature_map(feature_map: torch.Tensor):
+        assert feature_map.ndim == 3  # (C,H,W), in [-1,1]
+        c, h, w = feature_map.shape
+        feature_map_nps = []
+        for channel in range(c):
+            one_channel = feature_map[c]
+            one_channel = one_channel.permute(1, 2, 0).cpu().numpy()
+            one_channel = (one_channel - one_channel.min()) / (one_channel.max() - one_channel.min())  # (H,W), in [0,1]
+            feature_map_nps.append(one_channel)
+        return feature_map_nps
+
+    def _vis_intermediate_feature_pairs(self,
+                                        seg_batches: torch.Tensor,
+                                        index_list: list):
+        """ Visualize Intermediate Feature Pairs of FM Operators """
+        print('Visualizing intermediate feature pairs...')
+        B, C, H, W = seg_batches.shape  # batched order
+        save_folder = self.save_folder
+        n = self.num
+        assert len(index_list) <= n
+
+        mask = torch.zeros((B, H, W))
+        for b in range(B):
+            mask[b] = seg_batches[b].max(0)[1]
+        mask = mask.data  # 0-occ, 1-clean
+
+        for fm_idx in range(4):
+            fm_op = self.model.module.frb.fm_ops[fm_idx]
+            fm_op.plot_intermediate_feature_pairs(gt_occ_msk=mask,
+                                                  vis_index_list=index_list,
+                                                  save_folder=save_folder)
+
+    def _vis_embeddings_tsne(self,
+                             embeddings: np.ndarray,
+                             index_list: list = None,
+                             ):
+        if 'tsne' not in self.dataset_name:
+            return
+        print('Visualizing embeddings tsne...')
         from sklearn.manifold import TSNE
+        from utils.vis_tsne import vis_tsne2d
+
+        if index_list is None:
+            index_list = np.arange(embeddings.shape[0])
+        save_folder = self.save_folder
+        embeddings = embeddings[index_list].astype(np.float)
         tsne = TSNE(n_components=2, init='pca', random_state=0)
-        tsne.fit_transform(features)
-        print(tsne.embedding_.shape)  # (12000, 2)
+        tsne.fit_transform(embeddings)  # (N,2)
 
-        embedding = tsne.embedding_
-        min_val = embedding.min()
-        max_val = embedding.max()
-        heat_map = np.zeros((100, 100), dtype=np.uint8)
-        for pairs in embedding:
-            px = int((pairs[0] - min_val) / (max_val - min_val) * 98)
-            py = int((pairs[1] - min_val) / (max_val - min_val) * 98)
-            heat_map[px][py] += 1
-        heat_map = ((heat_map / heat_map.max()) * 15).astype(np.uint8)
+        tsne_2d: np.ndarray = tsne.embedding_
+        save_name = os.path.join(save_folder, 'tsne.jpg')
+        vis_tsne2d(tsne_2d, save_name, identity_cnt=self.tsne_id_cnt)
 
-        import matplotlib as mpl
-        mpl.use('Agg')
-        import matplotlib.pyplot as plt
-        plt.figure(figsize=(10, 10))
-        plt.tick_params(labelsize=35)
+    def _vis_embeddings_heat(self,
+                             embeddings: np.ndarray,
+                             index_list: list = None):
+        print('Visualizing embeddings heat...')
+        save_folder = self.save_folder
+        from eval.vis_heat import vis_feature_1d
+        vis_list = []
+        for index in index_list:
+            vis_list.append(index * 2)
+            vis_list.append(index * 2 + 1)
+        embeddings = embeddings[vis_list].astype(np.float)
+        for idx, embedding in enumerate(embeddings):
+            save_name = os.path.join(save_folder, '%d_heat.jpg' % idx)
+            vis_feature_1d(embedding, flatten_w=32, save_name=save_name)
 
-        import seaborn as sns
-        sns.heatmap(heat_map, xticklabels=20, yticklabels=20, cbar=None)
+    @torch.no_grad()
+    def _1to1_verification(self):
+        w, h = self.out_size
+        n = self.num  # n = pair * 2 = (batch * batch_size) * 2
+        dim_feature = self.dim_feature
+        features = np.zeros((n, dim_feature))  # [feat1,...,feat1,feat2,...,feat2]
+        features_flip = np.zeros_like(features)
+        seg_batches = torch.zeros((n, 2, h, w))
+        seg_s = torch.zeros_like(seg_batches)
+        if self.is_vis:
+            max_vis_cnt = 400
+            img_batches = torch.zeros((n, self.channel, h, w))  # [img1_batch,img2_batch,...,img1_batch,img2_batch]
+            img_s = torch.zeros_like(img_batches)  # [img1,...,img1,img2,...,img2]
 
-        save_name = 'features_' + self.task_name[:-12] + '.jpg'
-        plt.savefig(os.path.join(self.save_path, save_name))
-        plt.clf()
+        ''' 1. Extract Features '''
+        print("=> start inference ...")
+        batch_idx = 0
+        for batch in tqdm(self.eval_loader):
+            if batch_idx * self.batch_size >= 400 and self.is_vis:
+                continue
+            img1, img2, same = batch
+            img_ori = None
 
-        self.heat_map = heat_map
+            ''' a. original input '''
+            img1 = img1.cuda()
+            img2 = img2.cuda()
+            if 'restore' in self.dataset_name:
+                img_ori = img2
 
-    def _visualize_feature_map(self, feature_map, save_name):
-        val_min, val_max = feature_map.min(), feature_map.max()  # [-1, 1]
-        feature_map = feature_map.cpu().data.numpy()
+            feat1, seg1 = self._infer(img1, ori=img_ori)
+            feat2, seg2 = self._infer(img2, ori=img_ori)
 
-        channel = feature_map.shape[1]
-        h, w = feature_map.shape[-2], feature_map.shape[-1]
+            features[batch_idx * self.batch_size:
+                     (batch_idx + 1) * self.batch_size] = feat1.cpu().numpy()
+            features[batch_idx * self.batch_size + (n // 2):
+                     (batch_idx + 1) * self.batch_size + (n // 2)] = feat2.cpu().numpy()
 
-        heat_map = np.zeros((h, w), dtype=np.uint8)
-        for b in range(1):
-            for c in range(channel):
-                for i in range(h):
-                    for j in range(w):
-                        heat_map[i][j] = int((feature_map[b][c][i][j] + 1.0) / 2 * 255)
+            if self.is_vis:
+                img1_cpu = img1.cpu()
+                img2_cpu = img2.cpu()
+                img_s[batch_idx * self.batch_size:
+                      (batch_idx + 1) * self.batch_size] = img1_cpu
+                img_s[batch_idx * self.batch_size + (n // 2):
+                      (batch_idx + 1) * self.batch_size + (n // 2)] = img2_cpu
+                img_batches[batch_idx * self.batch_size * 2:
+                            batch_idx * self.batch_size * 2 + self.batch_size] = img1_cpu
+                img_batches[batch_idx * self.batch_size * 2 + self.batch_size:
+                            batch_idx * self.batch_size * 2 + self.batch_size * 2] = img2_cpu
 
-                import matplotlib as mpl
-                mpl.use('Agg')
-                import matplotlib.pyplot as plt
-                plt.figure(figsize=(5, 5))
-                plt.tick_params(labelsize=35)
-                plt.axis('off')
+            if seg1 is not None:
+                seg1_cpu = seg1.cpu()
+                seg2_cpu = seg2.cpu()
+                seg_s[batch_idx * self.batch_size:
+                      (batch_idx + 1) * self.batch_size] = seg1_cpu
+                seg_s[batch_idx * self.batch_size + (n // 2):
+                      (batch_idx + 1) * self.batch_size + (n // 2)] = seg2_cpu
+                seg_batches[batch_idx * self.batch_size * 2:
+                            batch_idx * self.batch_size * 2 + self.batch_size] = seg1_cpu
+                seg_batches[batch_idx * self.batch_size * 2 + self.batch_size:
+                            batch_idx * self.batch_size * 2 + self.batch_size * 2] = seg2_cpu
 
-                import seaborn as sns
-                sns.heatmap(heat_map, cbar=None, cmap='jet')
+            ''' b. flipped input '''
+            img1_flip = hflip(img1)
+            img2_flip = hflip(img2)
 
-                save_path = os.path.join(self.save_path, 'latent')
-                if not os.path.exists(save_path):
-                    os.mkdir(save_path)
-                save_path = os.path.join(save_path, str(b))
-                if not os.path.exists(save_path):
-                    os.mkdir(save_path)
-                save_path = os.path.join(save_path, str(h) + 'x' + str(w))
-                if not os.path.exists(save_path):
-                    os.mkdir(save_path)
-                plt.savefig(os.path.join(save_path, str(c) + save_name), pad_inches=0, bbox_inches='tight', dpi=100)
-                plt.clf()
+            feat1_flip, _ = self._infer(img1_flip)
+            feat2_flip, _ = self._infer(img2_flip)
+            features_flip[batch_idx * self.batch_size:
+                          (batch_idx + 1) * self.batch_size] = feat1_flip.cpu().numpy()
+            features_flip[batch_idx * self.batch_size + (n // 2):
+                          (batch_idx + 1) * self.batch_size + (n // 2)] = feat2_flip.cpu().numpy()
 
-    def _visualize_attn(self, mask, identity, in_image):
-        # print(mask.shape)  # (32, 512, 7, 7)
-        # print(identity.shape)  # (32, 512, 7, 7)
-
-        # save input image
-        for b in range(1):
-            arr = in_image[b].cpu().data.numpy()
-            rgb = (arr * 127 + 128)
-            rgb_img = np.zeros([112, 112, 3])
-            rgb_img[:, :, 0] = rgb[0]
-            rgb_img[:, :, 1] = rgb[1]
-            rgb_img[:, :, 2] = rgb[2]
-            img = Image.fromarray(rgb_img.astype(np.uint8), mode='RGB')
-            save_path = os.path.join(self.save_path, 'latent')
-            if not os.path.exists(save_path):
-                os.mkdir(save_path)
-            save_path = os.path.join(save_path, str(b))
-            if not os.path.exists(save_path):
-                os.mkdir(save_path)
-            img.save(os.path.join(save_path, 'input.jpg'))
-
-        # visualize feature map
-        self._visualize_feature_map(mask, 'attn.jpg')
-        self._visualize_feature_map(identity, 'identity.jpg')
-        self._visualize_feature_map(identity + identity * mask, 'cleaned.jpg')
-
-    def start_extract(self, all_img, protocol='NB'):
-        print("=> extract task started, task is '{}'".format(self.task_name))
-        model = self._load_model()
-
-        num = len(all_img)
-        features = np.zeros((num, 512))
-        features_flip = np.zeros((num, 512))
-
-        # img to tensor
-        all_input = torch.zeros(num, 3, 112, 112)
-        for i in range(num):
-            one_img = all_img[i]
-            one_img_tensor = self._load_one_input(one_img, i, protocol=protocol)
-            all_input[i, :, :, :] = one_img_tensor
-
-        all_flip = torch.zeros(num, 3, 112, 112)
-        for i in range(num):
-            one_img = all_img[i]
-            one_img_tensor = self._load_one_input(one_img, i, flip=True, protocol=protocol)
-            all_flip[i, :, :, :] = one_img_tensor
-
-        # start
-        print("=> img-to-tensor is finished, start inference ...")
-        # all_input = all_input.cuda()
-        with torch.no_grad():
-            all_input_var = torch.autograd.Variable(all_input)
-            all_input_var = all_input_var.sub_(0.5).div_(0.5)  # [-1, 1]
-            # print(all_input_var.min(), all_input_var.max())
-            all_flip_var = torch.autograd.Variable(all_flip)
-            all_flip_var = all_flip_var.sub_(0.5).div_(0.5)  # [-1, 1]
-
-        batch_size = 40
-        total_step = num // batch_size
-        assert batch_size * total_step == num
-        for i in range(total_step):
-            patch_input = all_input_var[i * batch_size : (i + 1) * batch_size]
-            # feature, mask, identity = model(patch_input)
-            feature = model(patch_input.cuda())
-            features[i * batch_size : (i + 1) * batch_size] = feature.data.cpu().numpy()
-
-            # vis
-            if i == -1:
-                self._visualize_attn(mask, identity, patch_input)
-
-        """ Visualize Predicted Masks """
-        #     if i <= 400:
-        #         # some_tensor.max(0)[0]: value of max_value
-        #         # some_tensor.max(0)[1]: index of max_value
-        #         mask = mask[0].cpu().max(0)[1].data.numpy() * 255
-        #         mask = mask.astype(np.uint8)
-        #
-        #         mask = Image.fromarray(mask.astype(np.uint8))
-        #         mask.save(os.path.join(self.save_path, 'pku' + str(i) + '_learned.jpg'))
-        #
-        #         img = np.zeros((112, 112, 3))
-        #         img[:, :, 0] = (patch_input[0][0].cpu().data.numpy() + 1.0) * 127.5
-        #         img[:, :, 1] = (patch_input[0][1].cpu().data.numpy() + 1.0) * 127.5
-        #         img[:, :, 2] = (patch_input[0][2].cpu().data.numpy() + 1.0) * 127.5
-        #
-        #         img = Image.fromarray(img.astype(np.uint8), mode='RGB')
-        #         img.save(os.path.join(self.save_path, 'pku' + str(i) + '_truth.jpg'))
-        #
-        # raise FileNotFoundError
-
-        for i in range(total_step):
-            patch_input = all_flip_var[i * batch_size: (i + 1) * batch_size]
-            # feature, mask, identity = model(patch_input)
-            feature = model(patch_input.cuda())
-            features_flip[i * batch_size: (i + 1) * batch_size] = feature.data.cpu().numpy()
-
-            # vis
-            if i == -1:
-                self._visualize_attn(mask, identity, patch_input)
+            batch_idx += 1
 
         features = features_flip + features
 
-        if not os.path.exists(self.save_path):
-            os.mkdir(self.save_path)
-        save_file = os.path.join(self.save_path, self.task_name + '.npy')
-        np.save(save_file, features)
-        return features
-        # print("=> extract task finished, file is saved at '{}'".format(save_file))
-
-        # print("=> visualization started")
-        # self._visualize_features(features)
-        # print("=> visualization finished")
-
-        # return ret_vector
-
-
-class Verification(object):
-    """人脸验证类"""
-    def __init__(self, task):
-        self.save_path = task['save_path']
-        self.task_name = task['task_name']
-        self.ground_truth_label = task['ground_truth_label']
-        self._prepare()
-
-    def _prepare(self):
-        feature = np.load(os.path.join(self.save_path, self.task_name + '.npy'))
-        feature = sklearn.preprocessing.normalize(feature)
-        self.feature = feature
-
-    def start_verification(self):
-        # print("=> verification started, caculating ...")
+        ''' 2. Calculate Metrics '''
         predict_label = []
-        num = self.feature.shape[0]
-        for i in range(num // 2):
-            dis_cos = cdist(self.feature[i * 2: i * 2 + 1, :],
-                            self.feature[i * 2 + 1: i * 2 + 2, :],
+        features_reorder = np.zeros_like(features)  # [feat1,feat2,feat1,feat2,...,feat1,feat2]
+        seg_reorder = torch.zeros_like(seg_s)
+        if self.is_vis:
+            img_reorder = torch.zeros_like(img_s)
+        for i in range(n // 2):
+            feat1 = features[i: i + 1, :]
+            feat2 = features[i + (n // 2): i + 1 + (n // 2), :]
+            dis_cos = cdist(feat1,
+                            feat2,
                             metric='cosine')
+            features_reorder[i * 2] = features[i]
+            features_reorder[i * 2 + 1] = features[i + (n // 2)]
+            seg_reorder[i * 2] = seg_s[i]
+            seg_reorder[i * 2 + 1] = seg_s[i + (n // 2)]
+            if self.is_vis:
+                img_reorder[i * 2] = img_s[i]
+                img_reorder[i * 2 + 1] = img_s[i + (n // 2)]
             predict_label.append(dis_cos[0, 0])
 
-        fpr, tpr, threshold = roc_curve(self.ground_truth_label, predict_label)
-        acc = tpr[np.argmin(np.abs(tpr - (1 - fpr)))]  # 选取合适的阈值
+        """ (0) Visualization """
+        if self.is_vis:
+            vis_index = np.arange(min(100, n)).tolist()
+            # self._vis_segmentation_result(img_reorder, seg_reorder, index_list=vis_index)
+            # self._vis_embeddings_heat(features_reorder, index_list=vis_index)
+            # self._vis_embeddings_tsne(features, index_list=np.arange(min(200, n // 2)))
+            # self._vis_intermediate_feature_pairs(seg_batches, index_list=[0, 1, 2, 3])  # not work
+            # self._vis_intermediate_feature_maps(index_list=[0])
+            self._vis_restored_feature_maps(index_list=[0])
+            print('Visualization finished, exiting.')
+            exit()
+
+        """ (1) Calculate Accuracy """
+        fpr, tpr, threshold = roc_curve(self.intsame_list, predict_label)
+        acc = tpr[np.argmin(np.abs(tpr - (1 - fpr)))]  # choose proper threshold
         print("=> verification finished, accuracy rate is {}".format(acc))
         ret_acc = acc
 
-        roc_auc = auc(fpr, tpr)
-        # 画图，只需要plt.plot(fpr,tpr),变量roc_auc只是记录auc的值，通过auc()函数能计算出来
-        plt.plot(fpr, tpr, lw=1, label='ROC fold %d (area = %0.2f)' % (i, roc_auc))
-        plt.savefig(os.path.join(self.save_path, 'auc.jpg'))
-        plt.clf()
+        # plot auc curve
+        # roc_auc = auc(fpr, tpr)
+        # plt.plot(fpr, tpr, lw=1, label='ROC fold %d (area = %0.2f)' % (i, roc_auc))
+        # plt.savefig(os.path.join(self.save_path, 'auc.jpg'))
+        # plt.clf()
 
-        """ Calculate TAR@FAR<=1e-3 """
+        if self.dataset_name not in ('mfr2', 'mfv',):
+            import eval.verification as ver
+            features_normed = sklearn.preprocessing.normalize(features_reorder)
+            _, _, accuracy, val, val_std, far = ver.evaluate(features_normed, self.issame_list)
+            acc2, std2 = np.mean(accuracy), np.std(accuracy)
+            print('acc2 = [%.6f]' % acc2)
+            ret_acc = acc2
+
+        """ (2) Calculate TAR@FAR<=1e-k """
         neg_cnt = len(predict_label) // 2
         pos_cnt = neg_cnt
-        self.ground_truth_label = np.array(self.ground_truth_label)
+        ground_truth_label = np.array(self.intsame_list)
         predict_label = np.array(predict_label)
-        pos_dist = predict_label[self.ground_truth_label == 0].tolist()
-        neg_dist = predict_label[self.ground_truth_label == 1].tolist()
+        pos_dist = predict_label[ground_truth_label == 0].tolist()
+        neg_dist = predict_label[ground_truth_label == 1].tolist()
 
         far_val = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5]
         ret_tarfar = np.zeros((len(far_val)))
         for idx in range(len(far_val)):
 
-            if idx != 2:
+            """ Choose the far values """
+            if idx > 3:
                 continue
 
             threshold = []
@@ -563,78 +484,229 @@ class Verification(object):
 
         return ret_acc, ret_tarfar
 
+    @torch.no_grad()
+    def _1ton_identification(self):
+        w, h = self.out_size
+        n = self.num  # n = probe * 2 + gallery
+        dim_feature = self.dim_feature
+        features = np.zeros((n, dim_feature))
+        # features_flip = np.zeros_like(features)
+        # img_batches = torch.zeros((n, self.channel, h, w))
+        idn_batches = torch.zeros((n, ))
 
-if __name__ == '__main__':
+        ''' Extracting features '''
+        batch_idx = 0
+        for batch in tqdm(self.eval_loader, desc='Extracting features'):
+            img, idn = batch
 
-    parser = argparse.ArgumentParser(description='PyTorch DualPathTransformer Training')
-    parser.add_argument('--network', type=str, default='dpt_r18', help='backbone network')
-    parser.add_argument('--dataset', type=str, default='lfw', help='lfw, cfp_fp, agedb_30')
+            img = img.cuda()
+            idn = idn.cuda()
+
+            feat, seg = self._infer(img)
+
+            features[batch_idx * self.batch_size:
+                     batch_idx * self.batch_size + self.batch_size] = feat.cpu().numpy()
+            # img_batches[batch_idx * self.batch_size:
+            #             batch_idx * self.batch_size + self.batch_size] = img.cpu()
+            idn_batches[batch_idx * self.batch_size:
+                        batch_idx * self.batch_size + self.batch_size] = idn.cpu()
+
+            batch_idx += 1
+
+        ''' identification accuracy '''
+        print('Extracting finished, start calculating...')
+        right, wrong1, wrong2 = 0, 0, 0
+
+        def norm_feats(feats: np.ndarray):
+            norm_f = np.sum(feats ** 2, axis=1, keepdims=True)
+            return feats / norm_f
+
+        scrub_ori_feats = norm_feats(features[:self.probe_cnt])
+        scrub_occ_feats = norm_feats(features[self.probe_cnt: self.probe_cnt * 2])
+        gallery_feats = norm_feats(features[self.probe_cnt * 2:])
+
+        dists_ori_gallery = cdist(scrub_ori_feats, gallery_feats, 'cosine')  # (i,j)
+        dists_ori_gallery_min = np.min(dists_ori_gallery, axis=1, keepdims=True)  # (i,1)
+
+        dists_ori_occ = cdist(scrub_ori_feats, scrub_occ_feats, 'cosine')  # (i,i)
+        dists_ori_occ[np.diag_indices_from(dists_ori_occ)] = 100.  # same images set to very large distance
+        dists_ori_occ_min = np.min(dists_ori_occ, axis=1)  # (i,)
+
+        # dists_ori_all = np.concatenate([dists_ori_occ, dists_ori_gallery_min], axis=1)  # (i,i+1)
+        # predict_index = dists_ori_all.argmin(axis=1)  # (i,)
+        # for idx_ori in range(len(predict_index)):
+        #     idx_pred = predict_index[idx_ori]
+        #     if idx_pred >= self.probe_cnt:
+        #         wrong1 += 1
+        #     elif idn_batches[idx_ori] != idn_batches[idx_pred]:
+        #         wrong2 += 1
+        #     else:
+        #         right += 1
+
+        low, high = 0, 0
+        while high < dists_ori_occ.shape[0]:
+            while high < dists_ori_occ.shape[0] and idn_batches[low] == idn_batches[high]:
+                high += 1
+            for row in range(low, high):
+                for col in range(low, high):
+                    if row == col:
+                        continue
+                    if dists_ori_gallery_min[row] < dists_ori_occ[row][col]:
+                        wrong1 += 1
+                    else:
+                        right += 1
+            low = high
+
+        ret_acc = right / (wrong1 + wrong2 + right)
+        print('Identification finished, right=%d, wrong1=%d, wrong2=%d, total=%d, acc=%.2f%%' % (
+            right, wrong1, wrong2, right + wrong1 + wrong2, ret_acc * 100
+        ))
+
+        ''' tar@far '''
+        far_val = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5]
+        ret_tarfar = np.zeros((len(far_val)))
+        return ret_acc, ret_tarfar
+
+    def start_eval(self):
+        if self.eval_mode == '1:1':
+            ret_acc, ret_tarfar = self._1to1_verification()
+        else:
+            ret_acc, ret_tarfar = self._1ton_identification()
+        return ret_acc, ret_tarfar
+
+
+def main():
+    parser = argparse.ArgumentParser(description='PyTorch MSML Testing')
+    parser.add_argument('--network', type=str, default='msml', help='backbone network')
+    parser.add_argument('--dataset', type=str, default='lfw',
+                        help='lfw, cfp_fp, agedb_30; mfr2, mfv; mega; lfw_tsne, lfw_restore')
+    parser.add_argument('--identity_cnt', type=int, default=10, help='used by lfw_tsne')
+    parser.add_argument('--weight_folder', type=str, help='the folder containing pre-trained weights')
+    parser.add_argument('--protocol', type=str, default='BB', help='add occlusions to the one or two of a pair')
+    parser.add_argument('--fill_type', type=str, default='black', help='block occlusion fill type')
+    parser.add_argument('--is_vis', type=str, default='no', help='visualization of FM arith')
+    parser.add_argument('--no-occ', action='store_true', help='do not add occ')
     args = parser.parse_args()
+
+    args.is_vis = True if args.is_vis == 'yes' else False
 
     random.seed(4)
     np.random.seed(1)
     torch.manual_seed(1)
     torch.cuda.manual_seed_all(1)
 
-    task_type = args.dataset
-    my_task = TASKS[task_type]
-
-    my_task['model_name'] = args.network
-    my_task['task_name'] = my_task['task_name']
-    print('[model_name]: ', my_task['model_name'])
-    print('[transform]: ', my_task['transform'])
-
     """ Pre-load images into memory """
     print("=> Pre-loading images ...")
-    from exp import read_mxnet
-    mx_reader = read_mxnet.ReadMXNet(my_task['task_name'], cfg.rec)
-    path = os.path.join(cfg.rec, my_task['task_name'] + ".bin")
-    all_img, issame_list = mx_reader.load_bin(path, (112, 112))
+    if args.weight_folder is None or (not os.path.exists(args.weight_folder)):
+        cfg_path = '/gavin/code/MSML/config.yaml'
+    else:
+        cfg_path = os.path.join(args.weight_folder, 'config.yaml')
+    cfg = load_yaml(cfg_path)
+    config_init(cfg)
+    if args.network == 'from2021':
+        cfg.out_size = (96, 112)  # (w,h)
+    print(cfg)
+
+    pre_trans = transforms.Compose([
+        transforms.CenterCrop((cfg.out_size[1], cfg.out_size[0])),
+    ])
+    if cfg.is_gray:
+        pre_trans = transforms.Compose([
+            transforms.Grayscale(),
+            transforms.Resize(cfg.out_size),
+            pre_trans
+        ])
+    if args.dataset in ('lfw', 'cfp_fp', 'agedb_30'):
+        eval_dataset = MXNetEvalDataset(
+            dataset_name=args.dataset,
+            rec_prefix=cfg.rec,
+            norm_0_1=cfg.is_gray,
+            pre_trans=pre_trans,
+            protocol=args.protocol,
+        )
+    elif args.dataset in ('mfr2', ):
+        pre_trans = transforms.Resize(cfg.out_size)  # MFR2 using Resize is better
+        eval_dataset = MFR2EvalDataset(
+            norm_0_1=cfg.is_gray,
+            pre_trans=pre_trans,
+        )
+    elif args.dataset in ('mfv', ):
+        eval_dataset = MFVEvalDataset(
+            norm_0_1=cfg.is_gray,
+            pre_trans=pre_trans,
+        )
+    elif args.dataset in ('mega', ):
+        eval_dataset = MegaFaceDataset(
+            distract_cnt=-1,
+            norm_0_1=cfg.is_gray,
+            pre_trans=pre_trans,
+            )
+    elif args.dataset in ('lfw_tsne', ):
+        assert args.is_vis, 'tsne should set args.is_vis as True.'
+        eval_dataset = MXNetTsneDataset(
+            dataset_name=args.dataset,
+            rec_prefix=cfg.rec,
+            identity_cnt=args.identity_cnt,
+            norm_0_1=cfg.is_gray,
+            pre_trans=pre_trans,
+        )
+    elif args.dataset in ('lfw_restore', ):
+        eval_dataset = MXNetRestorerDataset(
+            dataset_name=args.dataset,
+            rec_prefix=cfg.rec,
+            norm_0_1=cfg.is_gray,
+            pre_trans=pre_trans,
+        )
+    else:
+        pre_trans = transforms.Compose([])
+        eval_dataset = None
 
     """ Multi-Test """
-    protocol = 'BB'
-    lo_list = [0, 40]
-    hi_list = [0, 40]
+    # lo_list = [40,]
+    # hi_list = [41,]
+    lo_list = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90] if not args.is_vis else [35, ]
+    hi_list = [1, 11, 21, 31, 41, 51, 61, 71, 81, 91] if not args.is_vis else [36, ]
+    if args.no_occ or args.dataset in ('mfr2', 'mfv', 'mega'):
+        lo_list, hi_list = [0], [1]
     assert len(lo_list) == len(hi_list)
-    # lo_list.reverse()
-    # hi_list.reverse()
+
     avg_acc_list = []
     fars = np.zeros((len(lo_list), 5))
-    weight_path = ''
 
     for ind in range(0, len(lo_list)):
         print('================== [ %d ] ===============' % ind)
 
         lo, hi = lo_list[ind], hi_list[ind]
-        print('random block range: [%d ~ %d]' % (lo, hi))
-        my_task['transform'] = transforms.Compose([Randomblock(lo, hi),
-                                                   transforms.ToTensor()])
+        print('random block range: [%d ~ %d)' % (lo, hi))
 
-        intsame_list = []
-        for i in range(len(issame_list)):
-            flag = 0 if issame_list[i] else 1
-            intsame_list.append(flag)
-        my_task['ground_truth_label'] = intsame_list
+        occ_trans = RandomBlock(lo, hi, fill=args.fill_type)
+        # occ_trans = RandomConnectedPolygon(
+        #     is_training=False
+        # )
+        # occ_trans = RandomRealObject(
+        #     object_path='./datasets/augment/occluder/object_test',
+        #     is_training=False
+        # )
+        if args.dataset in ('mfr2', 'mfv', ):
+            occ_trans = transforms.Compose([])
+        elif args.dataset in ('mega', ):
+            occ_trans = RandomRealObject(
+                object_path='./datasets/augment/occluder/object_test',
+                is_training=False
+            )
+
+        if args.no_occ:
+            occ_trans = transforms.Compose([])
 
         avg_acc = 0.
-        repeat_time = 1 if (lo == 0 and hi == 0) or (lo == 100 and hi == 100) else 1
+        repeat_time = 1 if (lo == 0 and hi == 1) or (lo == 100 and hi == 101) or \
+                            args.is_vis or args.dataset in ('mfr2', 'mfv', 'mega', ) else 10
         for repeat in range(repeat_time):
-            ExtractTask = ExtractFeature(my_task)
-            features = ExtractTask.start_extract(all_img, protocol=protocol)
+            evaluator = MXNetEvaluator(eval_dataset, occ_trans, cfg, args)
+            acc, far = evaluator.start_eval()
 
-            weight_path = ExtractTask.weight_path
-
-            features = sklearn.preprocessing.normalize(features)
-
-            import eval.verification as ver
-            _, _, accuracy, val, val_std, far = ver.evaluate(features, issame_list)
-            acc2, std2 = np.mean(accuracy), np.std(accuracy)
-            print('acc2 = [%.6f]' % acc2)
-            avg_acc += acc2
-
-            VerificationTask = Verification(my_task)
-            _, tarfar = VerificationTask.start_verification()
-            fars[ind] += tarfar
+            avg_acc += acc
+            fars[ind] += far
 
         avg_acc = avg_acc / repeat_time
         fars[ind] /= repeat_time
@@ -642,13 +714,19 @@ if __name__ == '__main__':
         avg_acc_list.append(avg_acc)
         print('[avg_acc]: %.4f' % (avg_acc))
 
-    # print results
-    print('[protocol]:', protocol)
-    print('[model_name]:', my_task['model_name'])
-    print('[weight_path]:', weight_path)
+    ''' print results '''
+    print(cfg)
+    print('[target]:', args.dataset, '[protocol]:', args.protocol, '[fill_type]', args.fill_type)
+    print('[model_name]:', args.network)
+    print('[weight_path]:', args.weight_folder)
     for ind in range(0, len(avg_acc_list)):
         print('[%d ~ %d] | [avg_acc]: %.4f'
               % (lo_list[ind], hi_list[ind], avg_acc_list[ind]))
         far = fars[ind]
         print('          | [tar@far]: %.4f, %.4f, %.4f, %.4f, %.4f'
               % (far[0], far[1], far[2], far[3], far[4]))
+
+
+if __name__ == "__main__":
+    main()
+    # CUDA_VISIBLE_DEVICES=0 python3 eval/qeval_mxnet_workers.py --dataset mega --weight_folder out/arc18_

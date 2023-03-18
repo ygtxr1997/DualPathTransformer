@@ -1,4 +1,5 @@
 import os
+import copy
 
 from torch.utils.data import DataLoader, Dataset
 from PIL import Image
@@ -7,18 +8,17 @@ import cv2
 import imutils
 from tqdm import tqdm
 
-from eval.preprocess.RealOcc.utils.utils import get_srcNmask
-from eval.preprocess.RealOcc.utils.utils import get_randomOccluderNmask, get_occluderNmask
-from eval.preprocess.RealOcc.utils.utils import get_occluder_augmentor, get_src_augmentor
-from eval.preprocess.RealOcc.utils.utils import RandomOccluderNmask
-from eval.preprocess.RealOcc.utils.utils import OccluderNmask
+from dataset.RealOcc.utils.utils import get_srcNmask
+from dataset.RealOcc.utils.utils import get_randomOccluderNmask, get_occluderNmask
+from dataset.RealOcc.utils.utils import get_occluder_augmentor, get_src_augmentor
+from dataset.RealOcc.utils.utils import RandomOccluderNmask
+from dataset.RealOcc.utils.utils import OccluderNmask
 
-from eval.preprocess.RealOcc.utils.utils import augment_occluder
-from eval.preprocess.RealOcc.utils.utils import angle3pt
-# from eval.preprocess.RealOcc.utils import colour_transfer
-from eval.preprocess.RealOcc.utils.paste_over import paste_over
-from eval.preprocess.RealOcc.utils import random_shape_generator
-
+from dataset.RealOcc.utils.utils import augment_occluder
+from dataset.RealOcc.utils.utils import angle3pt
+# from dataset.RealOcc.utils import colour_transfer
+from dataset.RealOcc.utils.paste_over import paste_over
+from dataset.RealOcc.utils import random_shape_generator
 
 real_occ_path = {
     '11k-hands-img': '/tmp/train_tmp/real_occ/11k-hands_img',
@@ -29,7 +29,6 @@ real_occ_path = {
     'dtd': '/tmp/train_tmp/real_occ/dtd/images',
 }
 
-
 """ RealOcc (CVPRW'22)
 This transform is only used for training.
 Init Params:
@@ -38,16 +37,19 @@ Init Params:
 class RealOcc(object):
     def __init__(self,
                  occ_type: str = 'hand',
+                 split: str = 'train',
                  ):
         self.occ_type = occ_type
 
         self.on = None
         self.rom = None
+        self.split = split
         if occ_type == 'hand':
             sample_path = real_occ_path['11k-hands-txt']
             img_path = real_occ_path['11k-hands-img']
             mask_path = real_occ_path['11k-hands-msk']
             occluders_list = get_occluders_list_from_txt(sample_path)
+            occluders_list = self._split_samples(occluders_list, split)
             self.on = OccluderNmask(occluders_list=occluders_list,
                                     img_path=img_path,
                                     mask_path=mask_path)
@@ -55,6 +57,7 @@ class RealOcc(object):
             img_path = real_occ_path['coco-img']
             mask_path = real_occ_path['coco-msk']
             occluders_list = get_occluders_list_from_path(img_path)
+            occluders_list = self._split_samples(occluders_list, split)
             self.on = OccluderNmask(occluders_list=occluders_list,
                                     img_path=img_path,
                                     mask_path=mask_path)
@@ -65,6 +68,7 @@ class RealOcc(object):
             raise KeyError('Occlusion type not supported.')
 
     def __call__(self, ori_img):
+        ori_img = copy.deepcopy(ori_img)
         if self.occ_type == 'rand':
             occluder_img, occluder_mask = self.rom.get_img_mask()  # very slow
         else:
@@ -124,6 +128,17 @@ class RealOcc(object):
         arr = cv2.resize(arr, (w, h))
         return arr
 
+    @staticmethod
+    def _split_samples(sample_list: list, split: str, ratio: float = 0.8):
+        n = len(sample_list)
+        middle = int(n * ratio)
+        if split == 'train':
+            lo, hi = 0, middle
+        else:
+            lo, hi = middle, n
+        return sample_list[lo: hi]
+
+
 def get_occluders_list_from_txt(txt: str = '/gavin/datasets/msml/real_occ/11k_hands_sample.txt'):
     occluders_list = []
     with open(txt, 'r') as file:
@@ -161,11 +176,11 @@ def add_occ(ori_img: Image,
         raise KeyError('Occlusion type not supported.')
 
     if occ_type == 'rand':
-        from eval.preprocess.RealOcc.utils.utils import RandomOccluderNmask
+        from dataset.RealOcc.utils.utils import RandomOccluderNmask
         rom = RandomOccluderNmask(dtd_folder=img_path, mask_shape=112)
         occluder_img, occluder_mask = rom.get_img_mask()
     else:
-        from eval.preprocess.RealOcc.utils.utils import OccluderNmask
+        from dataset.RealOcc.utils.utils import OccluderNmask
         on = OccluderNmask(occluders_list=occluders_list,
                            img_path=img_path,
                            mask_path=mask_path)
@@ -270,6 +285,7 @@ def iterate_ijb(ijb_folder: str = '/gavin/datasets/msml/ijb/IJBB/loose_crop',
 if __name__ == '__main__':
     import time
     import random
+
     np.random.seed(4)
     random.seed(0)
 

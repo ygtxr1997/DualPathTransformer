@@ -58,6 +58,7 @@ class IBasicBlock(nn.Module):
         out += identity
         return out
 
+
 class IResBackbone(nn.Module):
     def __init__(self,
                  block,
@@ -138,92 +139,6 @@ class IResBackbone(nn.Module):
 
         return x
 
-
-# class IResBackboneSeg(nn.Module):
-#     def __init__(self,
-#                  block,
-#                  layers,
-#                  zero_init_residual=False,
-#                  groups=1,
-#                  width_per_group=64,
-#                  replace_stride_with_dilation=None,
-#                  conv1_stride=1):
-#         super(IResBackboneSeg, self).__init__()
-#         self.inplanes = 64
-#         self.dilation = 1
-#         if replace_stride_with_dilation is None:
-#             replace_stride_with_dilation = [False, False, False]
-#         if len(replace_stride_with_dilation) != 3:
-#             raise ValueError("replace_stride_with_dilation should be None "
-#                              "or a 3-element tuple, got {}".format(replace_stride_with_dilation))
-#
-#         self.groups = groups
-#         self.base_width = width_per_group
-#         self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=3, stride=conv1_stride, padding=1, bias=False)
-#         self.bn1 = nn.BatchNorm2d(self.inplanes, eps=1e-05)
-#         self.prelu = nn.PReLU(self.inplanes)
-#
-#         self.layer1 = self._make_layer(block, 64, layers[0], stride=2)
-#         if len(layers) >= 2:
-#             self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=False)
-#         if len(layers) >= 3:
-#             self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dilate=False)
-#         if len(layers) >= 4:
-#             self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=False)
-#
-#         for m in self.modules():
-#             if isinstance(m, nn.Conv2d):
-#                 nn.init.normal_(m.weight, 0, 0.1)
-#             elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
-#                 nn.init.constant_(m.weight, 1)
-#                 nn.init.constant_(m.bias, 0)
-#
-#         if zero_init_residual:
-#             for m in self.modules():
-#                 if isinstance(m, IBasicBlock):
-#                     nn.init.constant_(m.bn2.weight, 0)
-#
-#     def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
-#         downsample = None
-#         previous_dilation = self.dilation
-#         if dilate:
-#             self.dilation *= stride
-#             stride = 1
-#         if stride != 1 or self.inplanes != planes * block.expansion:
-#             downsample = nn.Sequential(
-#                 conv1x1(self.inplanes, planes * block.expansion, stride),
-#                 nn.BatchNorm2d(planes * block.expansion, eps=1e-05, ),
-#             )
-#         layers = []
-#         layers.append(
-#             block(self.inplanes, planes, stride, downsample, self.groups,
-#                   self.base_width, previous_dilation))
-#         self.inplanes = planes * block.expansion
-#         for _ in range(1, blocks):
-#             layers.append(
-#                 block(self.inplanes,
-#                       planes,
-#                       groups=self.groups,
-#                       base_width=self.base_width,
-#                       dilation=self.dilation))
-#
-#         return nn.Sequential(*layers)
-#
-#     def forward(self, x):
-#         x_feats = []
-#         x = self.conv1(x)
-#         x = self.bn1(x)
-#         x = self.prelu(x)
-#         x_feats.append(x)  # x0: (64, 56, 56)
-#
-#         x = self.layer1(x)
-#         x_feats.append(x)  # x1: (64, 28, 28)
-#         x = self.layer2(x)
-#         x_feats.append(x)  # x2: (128, 14, 14)
-#         x = self.layer3(x)
-#         x_feats.append(x)  # x3: (256, 7, 7)
-#
-#         return x_feats
 
 class IResBackboneSeg(nn.Module):
     def __init__(self,
@@ -479,73 +394,6 @@ class Attention(nn.Module):
         flops += 2. * m.heads * m.dim_head * (x.shape[1] ** 2)
         flops += 2. * m.inner_dim * m.dim * y.shape[-2]
         m.total_ops += flops
-
-
-# class CrossAttention(nn.Module):
-#     def __init__(self,
-#                  dim,
-#                  heads=8,
-#                  dim_head=64,
-#                  dropout=0.):
-#         super().__init__()
-#         inner_dim = dim_head * heads
-#         self.inner_dim = inner_dim
-#         self.dim = dim
-#         self.dim_head = dim_head
-#
-#         self.heads = heads
-#         self.scale = dim_head ** -0.5
-#
-#         self.attend = nn.Softmax(dim=-1)
-#         self.to_qkv_id = nn.Linear(dim, inner_dim * 3, bias=False)
-#         self.to_qkv_oc = nn.Linear(dim, inner_dim * 3, bias=False)
-#
-#         self.to_out_1 = nn.Sequential(
-#             nn.Linear(inner_dim, dim),
-#             nn.Dropout(dropout)
-#         )
-#         self.to_out_2 = nn.Sequential(
-#             nn.Linear(inner_dim, dim),
-#             nn.Dropout(dropout)
-#         )
-#
-#     def forward(self, x1, x2):
-#         x_id, x_oc = x1, x2
-#
-#         qkv_id = self.to_qkv_id(x_id).chunk(3, dim=-1)
-#         q1, k1, v1 = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=self.heads), qkv_id)
-#         k1, v1 = k1.detach(), v1.detach()
-#
-#         qkv_oc = self.to_qkv_oc(x_oc).chunk(3, dim=-1)
-#         q2, k2, v2 = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=self.heads), qkv_oc)
-#         k2, v2 = k2.detach(), v2.detach()
-#
-#         k_all = torch.cat((k1, k2), dim=-2)
-#         v_all = torch.cat((v1, v2), dim=-2)
-#
-#         dots_1 = torch.matmul(q1, k_all.transpose(-1, -2)) * self.scale
-#         attn_1 = self.attend(dots_1)
-#         out_1 = torch.matmul(attn_1, v_all)
-#         out_1 = rearrange(out_1, 'b h n d -> b n (h d)')
-#
-#         dots_2 = torch.matmul(q2, k_all.transpose(-1, -2)) * self.scale
-#         attn_2 = self.attend(dots_2)
-#         out_2 = torch.matmul(attn_2, v_all)
-#         out_2 = rearrange(out_2, 'b h n d -> b n (h d)')
-#
-#         out_1 = self.to_out_1(out_1)
-#         out_2 = self.to_out_2(out_2)
-#
-#         return out_1, out_2
-#
-#     def cnt_flops(m, x, y):
-#         x = x[0]  # (b, n+1, dim)
-#         y = y[0]
-#         flops = 3. * 2. * m.inner_dim * m.dim * x.shape[-2]
-#         flops += 2. * m.heads * (m.dim_head ** 2) * x.shape[1]
-#         flops += 2. * m.heads * m.dim_head * (x.shape[1] ** 2)
-#         flops += 2. * m.inner_dim * m.dim * y.shape[-2]
-#         m.total_ops += 2. * flops
 
 
 class CrossAttention(nn.Module):
@@ -865,9 +713,9 @@ class DualPathTransformer(nn.Module):
             return emb_id
 
 
-""" Conditional Positional Encodings for Vision Transformers (arXiv 2021) """
 class PEG(nn.Module):
     def __init__(self, dim=256, k=3):
+        """ Conditional Positional Encodings for Vision Transformers (arXiv 2021) """
         super().__init__()
         self.proj = nn.Conv2d(dim, dim, k, 1, k//2, groups=dim)
         # Only for demo use, more complicated functions are effective too.
@@ -897,3 +745,86 @@ def dpt_r34s3_ca1(pretrained=False, **kwargs):
 
 def dpt_r50s3_ca1(pretrained=False, **kwargs):
     return _dpt('dpt-tiny', [3, 4, 3], **kwargs)
+
+
+class DPTInfer(nn.Module):
+    def __init__(self):
+        super(DPTInfer, self).__init__()
+        from easydict import EasyDict as edict
+
+        cfg = edict()
+        cfg.dataset = "ms1m-retinaface-t2"
+        cfg.embedding_size = 512
+        cfg.sample_rate = 1
+        cfg.fp16 = True
+        cfg.momentum = 0.9
+        cfg.weight_decay = 5e-4
+        cfg.batch_size = 128  # 128
+        cfg.lr = 3e-4  # 0.1 for batch size is 512
+
+        cfg.num_classes = 93431  # 91180
+
+        """ Setting for Model DualPathTransformer"""
+        dp_set = edict()
+        dp_set.dim = 384
+        dp_set.depth = 2
+        dp_set.heads_id = 6
+        dp_set.heads_oc = 6
+        dp_set.dim_head_id = 64
+        dp_set.dim_head_oc = 64
+        dp_set.mlp_dim_id = 192
+        dp_set.mlp_dim_oc = 192
+        dp_set.emb_dropout = 0.1
+        dp_set.dropout_id = 0.1
+        dp_set.dropout_oc = 0.1
+        cfg.model_set = dp_set
+
+        net = dpt_r18s3_ca1(False,
+                            fp16=cfg.fp16,
+                            num_classes=cfg.num_classes,
+                            dim=cfg.model_set.dim,
+                            depth=cfg.model_set.depth,
+                            heads_id=cfg.model_set.heads_id,
+                            heads_oc=cfg.model_set.heads_oc,
+                            mlp_dim_id=cfg.model_set.mlp_dim_id,
+                            mlp_dim_oc=cfg.model_set.mlp_dim_oc,
+                            emb_dropout=cfg.model_set.emb_dropout,
+                            dim_head_id=cfg.model_set.dim_head_id,
+                            dim_head_oc=cfg.model_set.dim_head_oc,
+                            dropout_id=cfg.model_set.dropout_id,
+                            dropout_oc=cfg.model_set.dropout_oc)
+        net.eval()
+
+        weight = torch.load('/gavin/code/DualPathTransformer/out/tmp_0/backbone.pth')
+        net.load_state_dict(weight)
+        self.net = net
+
+    def forward(self, x):
+        return self.net(x)
+
+
+if __name__ == "__main__":
+    img = torch.randn(1, 3, 112, 112)
+    net = DPTInfer()
+    feat = net(img)
+    print('feat:', feat.shape)  # (B,256,14,14)
+
+    import thop
+    import backbone
+    import thop.vision.basic_hooks
+    flops, params = thop.profile(net, inputs=(img,),
+                                custom_ops={
+                                   backbone.face_transformer.Attention: backbone.face_transformer.Attention.cnt_flops,
+                                   backbone.face_transformer.FeedForward: backbone.face_transformer.FeedForward.cnt_flops,
+                                   backbone.seg_transformer.Attention: backbone.seg_transformer.Attention.cnt_flops,
+                                   backbone.seg_transformer.FeedForward: backbone.seg_transformer.FeedForward.cnt_flops,
+                                   backbone.dual_path_transformer.Attention: backbone.dual_path_transformer.Attention.cnt_flops,
+                                   backbone.dual_path_transformer.FeedForward: backbone.dual_path_transformer.FeedForward.cnt_flops,
+                                   backbone.dual_path_transformer.CrossAttention: backbone.dual_path_transformer.CrossAttention.cnt_flops,
+                                   backbone.dual_path_transformer.PreNormDual: backbone.dual_path_transformer.PreNormDual.cnt_flops,
+                                   backbone.dual_path_transformer_only_sa.Attention: \
+                                       backbone.dual_path_transformer_only_sa.Attention.cnt_flops,
+                                   backbone.dual_path_transformer_only_sa.FeedForward: \
+                                       backbone.dual_path_transformer_only_sa.FeedForward.cnt_flops,
+                                }, )
+    print('#Params=%.2fM, GFLOPS=%.2f' % (params / 1e6, flops / 1e9))

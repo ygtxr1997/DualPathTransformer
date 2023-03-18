@@ -1,0 +1,60 @@
+model:
+  target: backbone.dpt_subtract.DPTSubtract
+  params:
+    ft_config:
+      target: backbone.face_transformer.FaceEarlyTransformerBackbone
+      params:
+        start_channel: 64
+        early_depths: 6
+        depth: 13
+        dim: 512
+        heads: 9
+        dim_head: 64
+        mlp_dim: 1536
+        emb_dropout: 0.1
+        dropout: 0.1
+        feature_dim: 512
+        fp16: False
+
+    ft_head_config:
+      target: backbone.face_transformer.FaceTransformerHeader
+      params:
+        header_type: 'AMArcFace'
+        header_num_classes: 93431
+        header_params_m: 0.4
+        header_params_s: 64.0
+        header_params_a: 0.
+        header_params_k: 0.
+
+    opn_config:
+      target: backbone.occ_net.OccPerceptualNetwork
+      params:
+        cnn_layers: [ 3, 4, 14, 3 ]
+        dim: 384
+        depth: 3
+        heads: 6
+        dim_head: 64
+        mlp_dim: 256
+        num_classes: 2
+      resume: "./out/opn50_1/backbone.pth"
+
+train:
+  dataset: "ms1m-retinaface-t2"
+  rec: "/tmp/train_tmp/ms1m-retinaface"
+  nw: 4
+  base_bs: 512  # useless when xx_lr_scale is True
+  batch_size: 160  # 176 for fet12g,
+  adam_epoch: 20
+  adam_lr_max: 3e-4
+  adam_lr_min: 3e-5
+  adam_lr_scale: True  # scale with bs?
+  sgd_epoch: 10
+  sgd_lr_max: 1e-4
+  sgd_lr_min: 0.
+  sgd_lr_scale: True  # scale with bs?
+  sgd_weight_decay: 5e-4
+  val_targets: ["lfw", ]
+  out_folder: "out"
+  out_name: "dpt_sub12g50"
+  exp_id: 1
+  fp16: False

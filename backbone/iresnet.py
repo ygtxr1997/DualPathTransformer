@@ -61,8 +61,10 @@ class IBasicBlock(nn.Module):
 
 class IResNet(nn.Module):
     fc_scale = 7 * 7
+    # fc_scale = 4 * 4
     def __init__(self,
-                 block, layers, dropout=0, num_features=512, zero_init_residual=False,
+                 block=IBasicBlock,
+                 layers=None, dropout=0, num_features=512, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None, fp16=False):
         super(IResNet, self).__init__()
         self.fp16 = fp16
@@ -94,18 +96,6 @@ class IResNet(nn.Module):
                                        layers[3],
                                        stride=2,
                                        dilate=replace_stride_with_dilation[2])
-        # from bottleneck_transformer_pytorch import BottleStack
-        # self.layer4 = BottleStack(
-        #     dim=256,
-        #     fmap_size=14,
-        #     dim_out=512,
-        #     proj_factor=4,
-        #     downsample=True,
-        #     heads=4,
-        #     dim_head=128,
-        #     rel_pos_emb=True,
-        #     activation=nn.ReLU()
-        # )
 
         self.bn2 = nn.BatchNorm2d(512 * block.expansion, eps=1e-05,)
         self.dropout = nn.Dropout(p=dropout, inplace=True)
@@ -263,6 +253,7 @@ class IResNetFc(nn.Module):
             x = self.conv1(x)
             x = self.bn1(x)
             x = self.prelu(x)
+            print(x.shape)
             x = self.layer1(x)
             x = self.layer2(x)
             x = self.layer3(x)  # (256, 14, 14)

@@ -1,0 +1,36 @@
+model:
+  target: backbone.face_transformer.FaceTransformerWithHeader
+  params:
+    header_type: 'AMArcFace'
+    header_num_classes: 93431
+    header_params_m: 0.4
+    header_params_s: 64.0
+    header_params_a: 0.
+    header_params_k: 0.
+
+    backbone_config:
+      target: backbone.iresnet.IResNet
+      params:
+        layers: [ 2, 2, 2, 2 ]
+        fp16: False
+
+train:
+  dataset: "ms1m-retinaface-t2"
+  rec: "/tmp/train_tmp/ms1m-retinaface"
+  nw: 2
+  base_bs: 512  # useless when xx_lr_scale is True
+  batch_size: 64  # 176 for fet12g, 160 for ft12g, 224 for ft06g
+  adam_epoch: 20
+  adam_lr_max: 3e-4
+  adam_lr_min: 3e-5
+  adam_lr_scale: True  # scale with bs?
+  sgd_epoch: 10
+  sgd_lr_max: 1e-4
+  sgd_lr_min: 0.
+  sgd_lr_scale: True  # scale with bs?
+  sgd_weight_decay: 5e-4
+  val_targets: ["lfw", ]
+  out_folder: "out"
+  out_name: "ires18"
+  exp_id: 3
+  fp16: False

@@ -1,0 +1,5 @@
+model:
+  target: backbone.iresnet.IResNet
+  params:
+    layers: [3, 4, 6, 3]
+    fp16: False

@@ -69,6 +69,7 @@ def RecOcc(img, size, ratio):
 
 class BaseTrans(object):
     def __call__(self, img):
+        img = copy.deepcopy(img)
         random_flip = transforms.RandomHorizontalFlip()
         img = random_flip(img)
         msk = np.ones([img.size[1], img.size[0]], dtype=np.uint8) * 255
@@ -81,6 +82,7 @@ class RandomRecOcc(object):
         self.ratio = random.randint(1, 35) * 0.01
 
     def __call__(self, img):
+        img = copy.deepcopy(img)
         img, msk = self._RecOcc(img, img.size[1])
         return img, msk
 
@@ -124,6 +126,7 @@ class RandomConnectedPolygon(object):
         self.edge_num = edge_num
 
     def __call__(self, img):
+        img = copy.deepcopy(img)
         face_arr = np.array(img)
         height, width = img.size[1], img.size[0]
 
@@ -200,6 +203,7 @@ class RandomConnectedOval(object):
         self.rand_gray_val = rand_gray_val
 
     def __call__(self, img):
+        img = copy.deepcopy(img)
         face_arr = np.array(img)
         height, width = img.size[1], img.size[0]
 
@@ -240,50 +244,98 @@ class RandomConnectedOval(object):
         return oval
 
 
-class Glasses(object):
-    def __init__(self, glasses_path='in/occluder/glasses_crop/'):
+""" Random Glasses Occlusion
+This transform is only used for training.
+Init Params:
+    - glasses_path: the path to glasses image folder
+    - occ_height: we should resize the glasses images into the same height (default: 40)
+    - occ_width: we should resize the glasses images into the same width (default: 89)
+    - height_scale: the resized images can be randomly rescaled by -h_s to +h_s (h_s >= 1.0, default: 1.1)
+    - width_scale: the resized images can be randomly rescaled by -w_s to +w_s (w_s >= 1.0, default: 1.1)
+"""
+class RandomGlasses(object):
+    def __init__(self,
+                 glasses_path: str = 'occluder/glasses_crop/',
+                 occ_height: int = 40,
+                 occ_width: int = 80,
+                 height_scale: float = 1.1,
+                 width_scale: float = 1.1,
+                 ):
         self.glasses_root = glasses_path
         self.glasses_list = np.array(os.listdir(glasses_path))
         self.glasses_num = len(self.glasses_list)
 
-        self.object_imgs = np.zeros((self.glasses_num, 40, 89, 4))
+        self.occ_height = occ_height
+        self.occ_width = occ_width
+        self.height_scale = height_scale
+        self.width_scale = width_scale
+
+        # Preload the image folder
+        self.object_imgs = np.zeros((self.glasses_num,
+                                     occ_height, occ_width, 4), dtype=np.uint8)  # (num, height, width, RGBA)
         for idx in range(self.glasses_num):
             object_path = os.path.join(self.glasses_root, self.glasses_list[idx])
-            object = Image.open(object_path).convert('RGBA')  # [w, h]: (125 * 40+)
-            object = object.resize((89, 40))
-            self.object_imgs[idx] = np.array(object)  # [h, w, c]
+            object = Image.open(object_path).convert('RGBA')  # [w, h]: (125, 40+)
+            object = object.resize((occ_width, occ_height))
+            self.object_imgs[idx] = np.array(object, dtype=np.uint8)  # [h, w, c=4]
 
     def __call__(self, img):
-        # glasses_path = os.path.join(self.glasses_root, self.glasses_list[random.randint(0, self.glasses_num - 1)])
-        # glasses = Image.open(glasses_path).convert('RGBA')
-        glasses = self.object_imgs[random.randint(0, self.glasses_num - 1)]
-        glasses = Image.fromarray(glasses.astype('uint8')).convert('RGBA')
-        # scale_ratio = 0.8 * img.size[0] / glasses.size[0]
-        # glasses = glasses.resize((int(scale_ratio * glasses.size[0]), int(scale_ratio * glasses.size[1])))
+        mode = img.mode  # 'L' or 'RGB'
+        height, width = img.size[1], img.size[0]
+        occ_height = height * (self.occ_height / 120)
+        occ_width = width * (self.occ_width / 120)
 
-        alpha = np.array(glasses)[:, :, -1]  # channel A
-        channel = 1 if len(img.split()) == 2 else 3
-        mode = 'L' if channel == 1 else 'RGB'
-        glasses = glasses.convert(mode)
+        """ 1. Get an occlusion image from the preloaded list, and resize it randomly """
+        glasses = self.object_imgs[np.random.randint(0, self.glasses_num)]  # np-(h, w, RGBA)
+        glasses = Image.fromarray(glasses, mode='RGBA')  # PIL-(h, w, RGBA)
+        occ_width = int(occ_width * np.random.uniform(1 / self.width_scale, self.width_scale))  # w'
+        occ_height = int(occ_height * np.random.uniform(1 / self.height_scale, self.height_scale))  # h'
+        glasses = glasses.resize((occ_width, occ_height))  # PIL-(h', w', RGBA)
 
-        x_offset = int((0.1 + random.randint(-5, 5) * 0.02) * img.size[0])
-        y_offset = int((0.45 + random.randint(-5, 5) * 0.01) * img.size[0])
+        """ 2. Split Alpha channel and RGB channels, and convert RGB channels into img.mode """
+        alpha = np.array(glasses)[:, :, -1].astype(np.uint8)  # np-(h', w', A)
+        glasses = glasses.convert(mode)  # PIL-(h', w', mode)
 
-        face_arr = np.array(img)
-        glasses_arr = np.array(glasses)
+        """ 3. Generate top-left point (x, y) of occlusion """
+        x_offset = int((0.12 + np.random.randint(-5, 6) * 0.02) * width)
+        y_offset = int((0.3 + np.random.randint(-5, 6) * 0.01) * height)
 
-        face_crop = face_arr[y_offset:y_offset + glasses.size[1], x_offset:x_offset + glasses.size[0]]
-        glasses_arr[alpha == 0] = face_crop[alpha == 0]
-        face_arr[y_offset:y_offset + glasses.size[1], x_offset:x_offset + glasses.size[0]] = glasses_arr
+        """ 4. Surpass the face by occlusion, based on np.array """
+        face_arr = np.array(img)  # (H, W, mode)
+        glasses_arr = np.array(glasses)  # (h', w', mode)
 
-        img_glassesed = Image.fromarray(face_arr)
+        face_crop = face_arr[y_offset: y_offset + occ_height,
+                             x_offset: x_offset + occ_width]  # Crop the face according to the glasses position
+        glasses_arr[alpha <= 10] = face_crop[alpha <= 10]  # 'Alpha == 0' denotes transparent pixel
+        face_arr[y_offset: y_offset + occ_height,
+                 x_offset: x_offset + occ_width] = glasses_arr  # Overlap, np-(H, W, mode)
 
-        msk_shape = (img.size[1], img.size[0]) if channel == 1 else (img.size[1], img.size[0], 3)
+        """ 5. Get occluded face and occlusion mask """
+        img_glassesed = Image.fromarray(face_arr)  # PIL-(H, W, mode)
+
+        msk_shape = (height, width) if mode == 'L' else (height, width, 3)
         msk = np.ones(msk_shape, dtype=np.uint8) * 255
         glasses_arr[alpha != 0] = 0  # occluded
         glasses_arr[alpha == 0] = 255  # clean
-        msk[y_offset:y_offset + glasses.size[1], x_offset:x_offset + glasses.size[0]] = glasses_arr
+        msk[y_offset: y_offset + occ_height,
+            x_offset: x_offset + occ_width] = glasses_arr
         msk = Image.fromarray(msk).convert('L')
+
+        return img_glassesed, msk
+
+
+class RandomGlassesList(object):
+    def __init__(self,
+                 glasses_path_list: list,
+                 ):
+        self.trans_list = []
+        for glasses_path in glasses_path_list:
+            self.trans_list.append(RandomGlasses(glasses_path))
+
+    def __call__(self, img):
+        img = copy.deepcopy(img)
+        trans_idx = np.random.randint(0, len(self.trans_list))
+        img_glassesed, msk = self.trans_list[trans_idx](img)
         return img_glassesed, msk
 
 
@@ -301,6 +353,7 @@ class Scarf(object):
             self.object_imgs[idx] = np.array(object)
 
     def __call__(self, img):
+        img = copy.deepcopy(img)
         # scarf_path = os.path.join(self.scarf_root, self.scarf_list[random.randint(0, self.scarf_num - 1)])
         # scarf = Image.open(scarf_path).convert('RGBA')
         scarf = self.object_imgs[random.randint(0, self.scarf_num - 1)]
@@ -351,6 +404,7 @@ class RandomTrueObject(object):
     def __call__(self, img):
         # object_path = os.path.join(self.object_root, self.object_list[random.randint(0, self.object_num - 1)])
         # object = Image.open(object_path).convert('RGBA')
+        img = copy.deepcopy(img)
         object = self.object_imgs[random.randint(0, self.object_num - 1)]
         object = Image.fromarray(object.astype('uint8')).convert('RGBA')
         scale_ratio = (random.randint(40, 50) / 100) * img.size[0] / object.size[0]

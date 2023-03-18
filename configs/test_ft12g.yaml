@@ -1,0 +1,48 @@
+# FT
+#model:
+#  target: backbone.face_transformer.FaceTransformerBackbone
+#  params:
+#    cnn_layers: [3, 13, 20, 1]
+#    pattern_dim: 512
+#    depth: 14
+#    dim: 512
+#    heads: 12
+#    dim_head: 64
+#    mlp_dim: 2048
+#    emb_dropout: 0.1
+#    dropout: 0.1
+#    feature_dim: 512
+#    use_cls_token: False
+#    fp16: False
+
+# FPT
+#model:
+#  target: backbone.face_transformer.FaceTransformerBackbone
+#  params:
+#    cnn_layers: [1, 1, 1]
+#    pattern_dim: 256
+#    depth: 8
+#    dim: 512
+#    heads: 14
+#    dim_head: 64
+#    mlp_dim: 1536
+#    emb_dropout: 0.1
+#    dropout: 0.1
+#    feature_dim: 512
+#    fp16: False
+
+# FET
+model:
+  target: backbone.face_transformer.FaceEarlyTransformerBackbone
+  params:
+    start_channel: 64
+    early_depths: 6
+    depth: 13
+    dim: 512
+    heads: 9
+    dim_head: 64
+    mlp_dim: 1536
+    emb_dropout: 0.1
+    dropout: 0.1
+    feature_dim: 512
+    fp16: False

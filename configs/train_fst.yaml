@@ -1,0 +1,48 @@
+model:
+  target: backbone.face_transformer_swin.FaceSwinTransformerWithHeader
+  params:
+    header_type: 'AMArcFace'
+    header_num_classes: 93431
+    header_params_m: 0.4
+    header_params_s: 64.0
+    header_params_a: 0.
+    header_params_k: 0.
+
+    backbone_config:
+      target: backbone.face_transformer_swin.FaceSwinTransformerBackbone
+      params:
+        img_size: 112
+        patch_size: 2
+        num_classes: 512
+        depths: [2, 2, 6, 2]
+        embed_dim: 96
+        num_heads: [4, 8, 16, 32]
+        in_chans: 3
+        window_size: 7
+        mlp_ratio: 4
+        qkv_bias: True
+        drop_rate: 0.1
+        attn_drop_rate: 0.1
+        drop_path_rate: 0.1
+        patch_norm: True
+
+train:
+  dataset: "ms1m-retinaface-t2"
+  rec: "/tmp/train_tmp/ms1m-retinaface"
+  nw: 12
+  base_bs: 512  # useless when xx_lr_scale is True
+  batch_size: 160  # 112 for fst70m, 160 for fst40m, 256 for fst20m
+  adam_epoch: 20
+  adam_lr_max: 3e-4
+  adam_lr_min: 3e-5
+  adam_lr_scale: True  # scale with bs?
+  sgd_epoch: 10
+  sgd_lr_max: 1e-4
+  sgd_lr_min: 0.
+  sgd_lr_scale: True  # scale with bs?
+  sgd_weight_decay: 5e-4
+  val_targets: ["lfw", ]
+  out_folder: "out"
+  out_name: "fst40m"
+  exp_id: 1
+  fp16: False
