@@ -515,6 +515,112 @@ class FaceTransformerBackbone(nn.Module):
         return emb_id
 
 
+class FaceVitBackbone(nn.Module):
+    def __init__(self,
+                 start_channel: int,
+                 early_depths: int,
+                 dim,
+                 depth,
+                 heads,
+                 mlp_dim,
+                 emb_dropout=0.,
+                 dim_head=64,
+                 dropout=0.,
+                 feature_dim=512,
+                 use_cls_token=True,
+                 cls_token_nums: int = 1,
+                 fp16=False):
+        super(FaceVitBackbone, self).__init__()
+        self.fp16 = fp16
+
+        self.up_sample = 1
+        self.extractor_id = EarlyConv(start_channel=start_channel, depths=early_depths, up_sample=1)
+        double_channel_times = min(early_depths, 4)
+        pattern_dim = start_channel * (2 ** (double_channel_times - 1))
+
+        self.to_patch_embedding_id = nn.Sequential(
+            Rearrange('b c h w -> b (h w) c'),
+            nn.Linear(pattern_dim, dim)
+        )
+
+        self.use_cls_token = use_cls_token
+        self.cls_token_nums = cls_token_nums
+        if self.use_cls_token:
+            self.token_id = nn.Parameter(torch.randn(1, cls_token_nums, dim))
+
+        # self.pe_id = nn.Parameter(torch.randn(1, 14*14+1, dim))
+        height = 112 // (2 ** 3)  # down_sample - up_sample == 3
+        pos_emb = get_2d_sincos_pos_embed(pattern_dim, height).reshape((height, height, pattern_dim))
+        pos_emb = torch.FloatTensor(pos_emb).unsqueeze(0)
+        pos_emb = rearrange(pos_emb, 'b h w c -> b c h w').contiguous()
+        self.register_buffer('pe_id', pos_emb.contiguous())
+
+        self.dropout = nn.Dropout(emb_dropout)
+
+        self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim, dropout)
+
+        num_tokens = height * height
+        if self.use_cls_token:
+            num_tokens += cls_token_nums
+        out_tokens = cls_token_nums if self.use_cls_token else num_tokens
+        self.id_to_out = nn.Sequential(
+            nn.LayerNorm(out_tokens * dim, eps=1e-05),
+        )
+
+        self.fc = nn.Linear(out_tokens * dim, feature_dim)  # TODO: fix feature size to 512
+        self.features = nn.BatchNorm1d(feature_dim, eps=1e-05)
+        nn.init.constant_(self.features.weight, 1.0)
+        self.features.weight.requires_grad = False
+
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight.data)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.LayerNorm):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Conv2d):
+                nn.init.xavier_uniform_(m.weight.data)
+                if m.bias is not None:
+                    m.bias.data.zero_()
+
+    def forward(self, x):
+        with torch.cuda.amp.autocast(self.fp16):
+            # CNN
+            pat_id = self.extractor_id(x)
+
+            # position embedding
+            pat_id += self.pe_id
+
+            emb_id = self.to_patch_embedding_id(pat_id)
+            b, n, _ = emb_id.shape
+
+            if self.use_cls_token:
+                # Embedding[:, 0, :] insert token
+                tokens_id = repeat(self.token_id, '() n d -> b n d', b=b)
+                emb_id = torch.cat((tokens_id, emb_id), dim=1)  # (b, t+n, d)
+            emb_id = self.dropout(emb_id)
+
+            # Transformer
+            emb_id = self.transformer(emb_id)
+            if self.use_cls_token:
+                emb_id = emb_id[:, :self.cls_token_nums]  # (B,t,192)
+                emb_id = torch.flatten(emb_id, 1)  # (B,t,192)->(B,t*192)
+            else:
+                emb_id = torch.flatten(emb_id, 1)  # (B,14*14,192)->(B,37632)
+            emb_id = self.id_to_out(emb_id)  # [-4, 4], norm=22
+
+        """ op1. vit """
+        # eid.float(mb_id = emb_) if self.fp16 else emb_id
+        # emb_id = self.id_to_out(emb_id)
+        """ op2. arcface """
+        emb_id = emb_id.float() if self.fp16 else emb_id
+        emb_id = self.fc(emb_id)
+        emb_id = self.features(emb_id)
+        return emb_id
+
+
 class FacePoolTransformerBackbone(nn.Module):
     def __init__(self,
                  cnn_layers,

@@ -97,11 +97,12 @@ class CallBackLogging(object):
 
 
 class CallBackModelCheckpoint(object):
-    def __init__(self, rank, output="./"):
+    def __init__(self, rank, output="./", save_each: bool = False):
         self.rank: int = rank
         self.output: str = output
+        self.save_each: bool = save_each
 
-    def __call__(self, global_step, backbone: torch.nn.Module,
+    def __call__(self, global_step, backbone: torch.nn.Module, epoch: int,
                  is_adam_last: bool,
                  partial_fc: PartialFC = None,
                  awloss=None,):
@@ -111,6 +112,11 @@ class CallBackModelCheckpoint(object):
                 os.system('cp %s %s' % (
                     os.path.join(self.output, "backbone.pth"),
                     os.path.join(self.output, "backbone_adam.pth")
+                ))
+            if self.save_each:
+                os.system('cp %s %s' % (
+                    os.path.join(self.output, "backbone.pth"),
+                    os.path.join(self.output, "backbone_epoch%02d.pth" % epoch)
                 ))
         if global_step > 100 and partial_fc is not None:
             partial_fc.save_params()

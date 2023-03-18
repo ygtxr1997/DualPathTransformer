@@ -18,8 +18,8 @@
 #                           dim_head_id=cfg.dp_set.dim_head_id,
 #                           dim_head_oc=cfg.dp_set.dim_head_oc,
 #                           dropout_oc=0.2,
-#                           fp16=False).cuda()
-# # feature_id, feature_oc = dpt(img.cuda())
+#                           fp16=False).to(device)
+# # feature_id, feature_oc = dpt(img.to(device))
 # # print(feature_id.shape, feature_oc.shape)
 #
 # """ 2. Face Transformer """
@@ -33,8 +33,8 @@
 #                      emb_dropout=0.,
 #                      dim_head=cfg.ft_set.dim_head,
 #                      dropout=0.,
-#                      fp16=False).cuda()
-# # feature_id = ft(img.cuda())
+#                      fp16=False).to(device)
+# # feature_id = ft(img.to(device))
 # # print(feature_id.shape)
 #
 # """ 3. IResnet + MLP """
@@ -50,7 +50,7 @@
 #         x = self.mlp(x)
 #         return x
 #
-# irnet = iresnet_mlp().cuda()
+# irnet = iresnet_mlp().to(device)
 #
 # """ 4. Segment Transformer """
 # from backbone.seg_transformer import SegTransformer
@@ -63,7 +63,7 @@
 #                      emb_dropout=0.,
 #                      dim_head=64,
 #                      dropout=0.,
-#                      fp16=False).cuda()
+#                      fp16=False).to(device)
 #
 # """ 5. DPT only SA """
 # from backbone.dual_path_transformer_only_sa import DualPathTransformerSA
@@ -76,14 +76,14 @@
 #                     emb_dropout=0.,
 #                     dim_head=cfg.dptsa_set.dim_head,
 #                     dropout=0.,
-#                     fp16=False).cuda()
+#                     fp16=False).to(device)
 #
 # """ =================== flops&params ====================== """
 # import backbone
 #
 # model = ft
 # macs, params = profile(model,
-#                        inputs=(img.cuda(), ),
+#                        inputs=(img.to(device), ),
 #                        custom_ops={
 #                            backbone.face_transformer.Attention: backbone.face_transformer.Attention.cnt_flops,
 #                            backbone.face_transformer.FeedForward: backbone.face_transformer.FeedForward.cnt_flops,
@@ -195,9 +195,45 @@ def fet_test():
 
     use_label = True
     bs = 8
-    img = torch.randn(bs, 3, 112, 112).cuda()
-    label = torch.zeros((bs), dtype=torch.long).cuda()
-    model = model.cuda()
+    img = torch.randn(bs, 3, 112, 112).to(device)
+    label = torch.zeros((bs), dtype=torch.long).to(device)
+    model = model.to(device)
+    # start = time.time()
+    # for _ in tqdm(range(200)):
+    #     out = model(img, label) if use_label else model(img)
+    # print('Throughput: %.2f samples/sec' % (bs * 200 / (time.time() - start)))
+
+    model.train()
+    output = model(img, label) if use_label else model(img)
+    output.mean().backward()
+    print('Out shape:', output.shape)
+
+
+def fvit_test():
+    config = OmegaConf.load('configs/train_fvit04g.yaml')
+    print('config is:', config)
+    model = instantiate_from_config(config.model)
+    model.eval()
+    model = model.backbone
+    # print(config.train.get('save_each', False))
+    print('Model loaded.')
+
+    with torch.no_grad():
+        from fvcore.nn import FlopCountAnalysis, parameter_count, parameter_count_table
+        print("*" * 20, 'Full Model', "*" * 20)
+        img = torch.randn(1, 3, 112, 112)
+        flops = FlopCountAnalysis(model, img)
+        # print("[fvcore] #Params Table\n", parameter_count_table(model, max_depth=7))
+        print("[fvcore] FLOPs: %.2fG" % (flops.total() / 1e9))
+        print("[fvcore] #Params: %.2fM" % (parameter_count(model)[''] / 1e6))
+        params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print('[numel] #Params: %.2fM' % (params / 1e6))
+
+    use_label = False
+    bs = 8
+    img = torch.randn(bs, 3, 112, 112).to(device)
+    label = torch.zeros((bs), dtype=torch.long).to(device)
+    model = model.to(device)
     # start = time.time()
     # for _ in tqdm(range(200)):
     #     out = model(img, label) if use_label else model(img)
@@ -243,13 +279,13 @@ def ddp_test():
     print('config is:', config)
     model = instantiate_from_config(config.model)
     model.train()
-    model.cuda()
+    model.to(device)
     print('Model loaded.')
 
     use_label = True
     bs = 2
-    img = torch.randn(bs, 3, 112, 112).cuda()
-    label = torch.zeros((bs), dtype=torch.long).cuda()
+    img = torch.randn(bs, 3, 112, 112).to(device)
+    label = torch.zeros((bs), dtype=torch.long).to(device)
 
     output = model(img, label) if use_label else model(img)
     output.mean().backward()
@@ -282,9 +318,9 @@ def opn_test():
 
     use_label = False
     bs = 8
-    img = torch.randn(bs, 3, 112, 112).cuda()
-    label = torch.zeros((bs), dtype=torch.long).cuda()
-    model = model.cuda()
+    img = torch.randn(bs, 3, 112, 112).to(device)
+    label = torch.zeros((bs), dtype=torch.long).to(device)
+    model = model.to(device)
     start = time.time()
     for _ in tqdm(range(200)):
         out = model(img, label) if use_label else model(img)
@@ -316,9 +352,9 @@ def dpt_sub_test():
 
     # use_label = False
     # bs = 8
-    # img = torch.randn(bs, 3, 112, 112).cuda()
-    # label = torch.zeros((bs), dtype=torch.long).cuda()
-    # model = model.cuda()
+    # img = torch.randn(bs, 3, 112, 112).to(device)
+    # label = torch.zeros((bs), dtype=torch.long).to(device)
+    # model = model.to(device)
     # start = time.time()
     # for _ in tqdm(range(200)):
     #     out = model(img, label) if use_label else model(img)
@@ -350,11 +386,11 @@ def res_test():
         params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         print('[numel] #Params: %.2fM' % (params / 1e6))
 
-    use_label = False
+    use_label = True
     bs = 8
-    img = torch.randn(bs, 3, img_size, img_size).cuda()
-    label = torch.zeros((bs), dtype=torch.long).cuda()
-    model = model.cuda()
+    img = torch.randn(bs, 3, img_size, img_size).to(device)
+    label = torch.zeros((bs), dtype=torch.long).to(device)
+    model = model.to(device)
     # start = time.time()
     # for _ in tqdm(range(200)):
     #     out = model(img, label) if use_label else model(img)
@@ -367,10 +403,18 @@ def res_test():
 
 
 if __name__ == "__main__":
+    if torch.backends.mps.is_built():
+        device = 'mps'
+    elif torch.backends.cuda.is_built():
+        device = 'cuda'
+    else:
+        device = 'cpu'
+    print('Run on device: %s' % device)
 
-    dpt_sub_test()
+    # dpt_sub_test()
     # opn_test()
     # ddp_test()
     # fet_test()
+    fvit_test()
     # main()
     # res_test()

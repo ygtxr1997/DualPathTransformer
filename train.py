@@ -155,7 +155,8 @@ def main(args):
 
     callback_verification = CallBackVerification(8000, rank, cfg_train.val_targets, cfg_train.rec)
     callback_logging = CallBackLogging(50, rank, total_step, cfg_train.batch_size, world_size, None)
-    callback_checkpoint = CallBackModelCheckpoint(rank, output_folder)
+    callback_checkpoint = CallBackModelCheckpoint(rank, output_folder,
+                                                  save_each=cfg_train.get('save_each', False))
 
     loss = AverageMeter()
     loss_1 = AverageMeter()
@@ -247,7 +248,7 @@ def main(args):
                     lr = param_group['lr']
                 print(lr)
 
-        callback_checkpoint(global_step, backbone, is_adam_last=epoch == cfg_train.adam_epoch - 1,
+        callback_checkpoint(global_step, backbone, epoch, is_adam_last=epoch == cfg_train.adam_epoch - 1,
                             partial_fc=None, awloss=None,)
         scheduler.step()
     dist.destroy_process_group()
